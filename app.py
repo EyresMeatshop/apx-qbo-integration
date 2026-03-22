@@ -41,13 +41,13 @@ def connect():
 def callback():
     error = request.args.get("error")
     if error:
-        return f"OAuth error: {error} | details: {dict(request.args)}", 400
+        return f"OAuth error: {error}", 400
 
     auth_code = request.args.get("code")
     realm_id = request.args.get("realmId")
 
     if not auth_code:
-        return f"Missing auth code. Params received: {dict(request.args)}", 400
+        return "Missing auth code.", 400
 
     client_id = os.getenv("QBO_CLIENT_ID", "")
     client_secret = os.getenv("QBO_CLIENT_SECRET", "")
@@ -73,22 +73,22 @@ def callback():
     r = requests.post(token_url, headers=headers, data=data, timeout=30)
 
     if not r.ok:
-        return f"Token exchange failed: {r.status_code} | {r.text}", 400
+        return f"Token exchange failed: {r.status_code}", 400
 
     token_json = r.json()
 
+    # IMPORTANT:
+    # Do not print or return tokens in browser output anymore.
+    # Save them later via your secure automation flow.
     access_token = token_json.get("access_token", "")
     refresh_token = token_json.get("refresh_token", "")
 
-    return f"""
-    <h3>Connected successfully</h3>
-    <p>Copy these into your <b>.env.production</b> file:</p>
-    <pre>
-QBO_REALM_ID={realm_id}
-QBO_ACCESS_TOKEN={access_token}
-QBO_REFRESH_TOKEN={refresh_token}
-    </pre>
-    """
+    print("QBO OAuth connected successfully")
+    print(f"Realm ID received: {bool(realm_id)}")
+    print(f"Access token received: {bool(access_token)}")
+    print(f"Refresh token received: {bool(refresh_token)}")
+
+    return redirect("/success")
 
 @app.route("/success")
 def success():
@@ -111,16 +111,6 @@ def terms():
     <p>Use of this system is restricted to authorized personnel only.</p>
     <p>The application is intended only for approved business synchronization and accounting workflows.</p>
     """
-@app.route("/env-check")
-def env_check():
-    client_id = os.getenv("QBO_CLIENT_ID", "")
-    client_secret = os.getenv("QBO_CLIENT_SECRET", "")
-    redirect_uri = os.getenv("QBO_REDIRECT_URI", "")
-    return {
-        "has_client_id": bool(client_id),
-        "has_client_secret": bool(client_secret),
-        "redirect_uri": redirect_uri,
-    }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
