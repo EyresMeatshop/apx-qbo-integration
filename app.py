@@ -111,6 +111,16 @@ def terms():
     <p>Use of this system is restricted to authorized personnel only.</p>
     <p>The application is intended only for approved business synchronization and accounting workflows.</p>
     """
+@app.route("/env-check")
+def env_check():
+    client_id = os.getenv("QBO_CLIENT_ID", "")
+    client_secret = os.getenv("QBO_CLIENT_SECRET", "")
+    redirect_uri = os.getenv("QBO_REDIRECT_URI", "")
+    return {
+        "has_client_id": bool(client_id),
+        "has_client_secret": bool(client_secret),
+        "redirect_uri": redirect_uri,
+    }
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "10000"))
