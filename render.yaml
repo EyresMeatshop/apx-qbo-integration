@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: eyres-meat-chop-review
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 2 --threads 4 --timeout 120
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+  - type: worker
+    name: eyres-meat-chop-live-sync
+    runtime: python
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u live_sync_runner.py
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+
+  - type: cron
+    name: eyres-meat-chop-nightly
+    runtime: python
+    plan: starter
+    schedule: "0 3 * * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -u nightly_sync.py
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.11.9"

@@ -401,6 +401,34 @@ def callback():
 
     return redirect("/success")
 
+@app.route("/qbo_callback")
+def qbo_callback():
+    from intuitlib.client import AuthClient
+    import os
+
+    auth_client = AuthClient(
+        client_id=os.getenv("QBO_CLIENT_ID"),
+        client_secret=os.getenv("QBO_CLIENT_SECRET"),
+        environment=os.getenv("QBO_ENVIRONMENT"),
+        redirect_uri=os.getenv("QBO_REDIRECT_URI"),
+    )
+
+    auth_code = request.args.get("code")
+    realm_id = request.args.get("realmId")
+
+    auth_client.get_bearer_token(auth_code, realm_id=realm_id)
+
+    access_token = auth_client.access_token
+    refresh_token = auth_client.refresh_token
+
+    print("\n=== NEW TOKENS GENERATED ===")
+    print(f"QBO_ACCESS_TOKEN={access_token}")
+    print(f"QBO_REFRESH_TOKEN={refresh_token}")
+    print(f"QBO_REALM_ID={realm_id}")
+    print("===========================\n")
+
+    return "QuickBooks Connected Successfully"
+
 
 @app.route("/success")
 def success():

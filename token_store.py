@@ -1,121 +1,42 @@
-import base64
-import requests
-
-from config import settings
-from token_store import update_env_file, get_active_env_file
+import os
+from pathlib import Path
 
 
-class QBOClient:
-    def __init__(self):
-        self.realm_id = settings.QBO_REALM_ID
-        self.access_token = settings.QBO_ACCESS_TOKEN
-        self.refresh_token = settings.QBO_REFRESH_TOKEN
-        self.client_id = settings.QBO_CLIENT_ID
-        self.client_secret = settings.QBO_CLIENT_SECRET
+def get_active_env_file() -> str:
+    return os.getenv("APP_ENV_FILE", ".env")
 
-        self.base_url = (
-            "https://sandbox-quickbooks.api.intuit.com"
-            if settings.QBO_ENVIRONMENT == "sandbox"
-            else "https://quickbooks.api.intuit.com"
-        )
 
-        self.session = requests.Session()
-        self.session.trust_env = False
+def update_env_file(env_file: str, updates: dict[str, str]) -> None:
+    """
+    Best-effort .env updater for local development.
 
-    def headers(self):
-        return {
-            "Authorization": f"Bearer {self.access_token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
+    On cloud hosts the filesystem is often read-only; callers should catch failures
+    and persist secrets elsewhere (database).
+    """
+    path = Path(env_file)
+    if not path.exists():
+        path.write_text("", encoding="utf-8")
 
-    def refresh_access_token(self):
-        token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    keys = set(updates.keys())
+    new_lines: list[str] = []
+    seen = set()
 
-        basic = f"{self.client_id}:{self.client_secret}"
-        basic_b64 = base64.b64encode(basic.encode("utf-8")).decode("utf-8")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            new_lines.append(line)
+            continue
 
-        headers = {
-            "Accept": "application/json",
-            "Authorization": f"Basic {basic_b64}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
+        k = stripped.split("=", 1)[0].strip()
+        if k in keys:
+            new_lines.append(f"{k}={updates[k]}")
+            seen.add(k)
+        else:
+            new_lines.append(line)
 
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": self.refresh_token,
-        }
+    for k, v in updates.items():
+        if k not in seen:
+            new_lines.append(f"{k}={v}")
 
-        r = self.session.post(token_url, headers=headers, data=data, timeout=30)
-        r.raise_for_status()
-
-        token_json = r.json()
-
-        self.access_token = token_json["access_token"]
-        self.refresh_token = token_json["refresh_token"]
-
-        env_file = get_active_env_file()
-        update_env_file(
-            env_file,
-            {
-                "QBO_ACCESS_TOKEN": self.access_token,
-                "QBO_REFRESH_TOKEN": self.refresh_token,
-            },
-        )
-
-        print("\nNEW TOKENS GENERATED")
-        print(f"Saved refreshed tokens to: {env_file}")
-        print("QBO access/refresh tokens updated successfully.\n")
-
-    def _get(self, url, params=None):
-        r = self.session.get(url, headers=self.headers(), params=params, timeout=30)
-        if r.status_code == 401:
-            print("Access token expired. Refreshing token...")
-            self.refresh_access_token()
-            r = self.session.get(url, headers=self.headers(), params=params, timeout=30)
-        r.raise_for_status()
-        return r.json()
-
-    def _post(self, url, payload):
-        r = self.session.post(url, headers=self.headers(), json=payload, timeout=30)
-        if r.status_code == 401:
-            print("Access token expired. Refreshing token...")
-            self.refresh_access_token()
-            r = self.session.post(url, headers=self.headers(), json=payload, timeout=30)
-
-        if not r.ok:
-            print("POST FAILED")
-            print("URL:", url)
-            print("STATUS:", r.status_code)
-            print("RESPONSE:", r.text)
-            print("PAYLOAD:", payload)
-
-        r.raise_for_status()
-        return r.json()
-
-    def query(self, sql):
-        url = f"{self.base_url}/v3/company/{self.realm_id}/query"
-        return self._get(url, params={"query": sql})
-
-    def get_company_info(self):
-        url = f"{self.base_url}/v3/company/{self.realm_id}/companyinfo/{self.realm_id}"
-        return self._get(url)
-
-    def get_items(self):
-        return self.query("SELECT * FROM Item MAXRESULTS 1000")
-
-    def get_sales_receipt_by_doc_number(self, doc_number):
-        safe = doc_number.replace("'", "\\'")
-        return self.query(f"SELECT * FROM SalesReceipt WHERE DocNumber = '{safe}' MAXRESULTS 10")
-
-    def create_item(self, payload):
-        url = f"{self.base_url}/v3/company/{self.realm_id}/item"
-        return self._post(url, payload)
-
-    def create_sales_receipt(self, payload):
-        url = f"{self.base_url}/v3/company/{self.realm_id}/salesreceipt"
-        return self._post(url, payload)
-
-    def get_first_income_account(self):
-        data = self.query("SELECT * FROM Account WHERE AccountType = 'Income' MAXRESULTS 10")
-        return data.get("QueryResponse", {}).get("Account", [])
+    path.write_text("\n".join(new_lines) + "\n", encoding="utf-8")

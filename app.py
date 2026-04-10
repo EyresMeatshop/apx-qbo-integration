@@ -6,6 +6,8 @@ import base64
 
 from werkzeug.security import generate_password_hash, check_password_hash
 
+from config import settings
+
 from approval_store import (
     init_approval_tables,
     get_batch,
@@ -24,7 +26,11 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"] = False  # set True on production HTTPS host
+_secure_flag = os.getenv("SESSION_COOKIE_SECURE", "").strip().lower()
+if _secure_flag:
+    app.config["SESSION_COOKIE_SECURE"] = _secure_flag in ("1", "true", "yes", "y", "on")
+else:
+    app.config["SESSION_COOKIE_SECURE"] = settings.APP_ENV == "production"
 
 
 @app.after_request
@@ -400,6 +406,34 @@ def callback():
     print(f"Refresh token received: {bool(refresh_token)}")
 
     return redirect("/success")
+
+@app.route("/qbo_callback")
+def qbo_callback():
+    from intuitlib.client import AuthClient
+    import os
+
+    auth_client = AuthClient(
+        client_id=os.getenv("QBO_CLIENT_ID"),
+        client_secret=os.getenv("QBO_CLIENT_SECRET"),
+        environment=os.getenv("QBO_ENVIRONMENT"),
+        redirect_uri=os.getenv("QBO_REDIRECT_URI"),
+    )
+
+    auth_code = request.args.get("code")
+    realm_id = request.args.get("realmId")
+
+    auth_client.get_bearer_token(auth_code, realm_id=realm_id)
+
+    access_token = auth_client.access_token
+    refresh_token = auth_client.refresh_token
+
+    print("\n=== NEW TOKENS GENERATED ===")
+    print(f"QBO_ACCESS_TOKEN={access_token}")
+    print(f"QBO_REFRESH_TOKEN={refresh_token}")
+    print(f"QBO_REALM_ID={realm_id}")
+    print("===========================\n")
+
+    return "QuickBooks Connected Successfully"
 
 
 @app.route("/success")

@@ -1,7 +1,6 @@
 import requests
 from config import settings
 import time
-import requests
 
 
 class LoyverseClient:
@@ -92,3 +91,90 @@ class LoyverseClient:
                 break
 
         return {"customers": all_customers}
+
+    def _post(self, path: str, payload):
+        url = f"{self.base_url}{path}"
+        last_error = None
+
+        for attempt in range(3):
+            try:
+                r = self.session.post(url, headers=self.headers(), json=payload, timeout=30)
+                r.raise_for_status()
+                return r.json() if r.text else {}
+            except requests.exceptions.ConnectionError as e:
+                last_error = e
+                print(f"LOYVERSE POST retry {attempt + 1}/3 after connection error: {e}")
+                time.sleep(2)
+
+        raise last_error
+
+    def build_item_variant_index(self) -> dict[str, dict]:
+        """
+        Builds an index keyed by Loyverse item_id (not variant_id):
+        {
+          "<item_id>": {"variant_id": "...", "in_stock": 12.0}
+        }
+
+        This is intentionally defensive because Loyverse item payloads vary depending on account features.
+        """
+        data = self.get_items()
+        items = data.get("items", []) if isinstance(data, dict) else []
+
+        idx: dict[str, dict] = {}
+
+        for item in items:
+            item_id = item.get("id") or item.get("item_id")
+            if not item_id:
+                continue
+
+            variants = item.get("variants")
+            if isinstance(variants, dict):
+                variants = [variants]
+            if not isinstance(variants, list):
+                variants = []
+
+            chosen_variant = variants[0] if variants else {}
+            variant_id = (
+                chosen_variant.get("variant_id")
+                or chosen_variant.get("id")
+                or item.get("variant_id")
+            )
+
+            in_stock = (
+                chosen_variant.get("in_stock")
+                if "in_stock" in chosen_variant
+                else item.get("in_stock")
+            )
+
+            try:
+                in_stock_val = float(in_stock if in_stock is not None else 0)
+            except Exception:
+                in_stock_val = 0.0
+
+            if variant_id:
+                idx[str(item_id)] = {
+                    "variant_id": str(variant_id),
+                    "in_stock": in_stock_val,
+                }
+
+        return idx
+
+    def update_inventory_levels(self, inventory_levels: list[dict]):
+        """
+        Update inventory levels for variants.
+
+        Expected input:
+        [
+          {"variant_id": "<id>", "in_stock": 10},
+          ...
+        ]
+        """
+        if not inventory_levels:
+            return {}
+
+        # Loyverse API uses POST /inventory for bulk inventory updates.
+        # Some accounts accept a top-level list; others require an object wrapper.
+        try:
+            return self._post("/inventory", inventory_levels)
+        except Exception:
+            return self._post("/inventory", {"inventory_levels": inventory_levels})
