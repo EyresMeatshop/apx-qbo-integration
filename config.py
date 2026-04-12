@@ -1,8 +1,19 @@
 import os
+from pathlib import Path
+
 from dotenv import load_dotenv
 
-ENV_FILE = os.getenv("APP_ENV_FILE", ".env")
-load_dotenv(ENV_FILE)
+# Resolve env files next to this file so tokens load even when cwd is not the project root.
+_ROOT = Path(__file__).resolve().parent
+_explicit = (os.getenv("APP_ENV_FILE") or "").strip()
+if _explicit:
+    _env_path = Path(_explicit) if os.path.isabs(_explicit) else _ROOT / _explicit
+    load_dotenv(_env_path)
+else:
+    # Default: .env then .env.production (later file overrides) — common local layout.
+    load_dotenv(_ROOT / ".env")
+    load_dotenv(_ROOT / ".env.production", override=True)
+load_dotenv()  # optional: cwd .env overrides
 
 _APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 
@@ -10,8 +21,8 @@ _APP_ENV = os.getenv("APP_ENV", "development").strip().lower()
 class Settings:
     APP_ENV = _APP_ENV
 
-    LOYVERSE_ACCESS_TOKEN = os.getenv("LOYVERSE_ACCESS_TOKEN", "")
-    LOYVERSE_API_BASE = os.getenv("LOYVERSE_API_BASE", "https://api.loyverse.com/v1.0")
+    LOYVERSE_ACCESS_TOKEN = (os.getenv("LOYVERSE_ACCESS_TOKEN", "") or "").strip()
+    LOYVERSE_API_BASE = (os.getenv("LOYVERSE_API_BASE", "https://api.loyverse.com/v1.0") or "").strip().rstrip("/")
 
     QBO_CLIENT_ID = os.getenv("QBO_CLIENT_ID", "")
     QBO_CLIENT_SECRET = os.getenv("QBO_CLIENT_SECRET", "")

@@ -1,6 +1,7 @@
+import time
+
 import requests
 from config import settings
-import time
 
 
 class LoyverseClient:
@@ -20,24 +21,31 @@ class LoyverseClient:
     def _get(self, path, params=None):
         url = f"{self.base_url}{path}"
         last_error = None
-    
+
         for attempt in range(3):
             try:
                 r = self.session.get(url, headers=self.headers(), params=params, timeout=30)
+                if not r.ok:
+                    body = (r.text or "")[:2000]
+                    print(f"LOYVERSE API HTTP {r.status_code} {path}")
+                    if body:
+                        print(body)
                 r.raise_for_status()
                 return r.json()
+            except requests.exceptions.HTTPError:
+                raise
             except requests.exceptions.ConnectionError as e:
                 last_error = e
                 print(f"LOYVERSE GET retry {attempt + 1}/3 after connection error: {e}")
                 time.sleep(2)
-    
+
         raise last_error
     def get_items(self):
         all_items = []
         cursor = None
 
         while True:
-            params = {}
+            params = {"limit": 250}
             if cursor:
                 params["cursor"] = cursor
 
@@ -57,11 +65,24 @@ class LoyverseClient:
         cursor = None
 
         while True:
-            params = {}
+            # Max page size reduces how many paginated calls we make (some accounts hit 402 on page 2+).
+            params = {"limit": 250}
             if cursor:
                 params["cursor"] = cursor
 
-            data = self._get("/receipts", params=params)
+            try:
+                data = self._get("/receipts", params=params)
+            except requests.exceptions.HTTPError as e:
+                resp = getattr(e, "response", None)
+                # 402 often means plan/subscription limit (e.g. full receipt export). Use what we have.
+                if resp is not None and resp.status_code == 402 and all_receipts:
+                    print(
+                        "LOYVERSE: HTTP 402 on receipt pagination — stopping with partial list. "
+                        "This usually means a Loyverse plan/add-on limit; check Back Office billing or Loyverse support. "
+                        f"Fetched so far: {len(all_receipts)} receipt(s)."
+                    )
+                    break
+                raise
 
             receipts = data.get("receipts", []) if isinstance(data, dict) else []
             all_receipts.extend(receipts)
@@ -77,7 +98,7 @@ class LoyverseClient:
         cursor = None
 
         while True:
-            params = {}
+            params = {"limit": 250}
             if cursor:
                 params["cursor"] = cursor
 

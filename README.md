@@ -40,6 +40,17 @@ You will need:
   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`
   - `EMAIL_FROM`, `EMAIL_TO`
 
+### Local secret files (next to `config.py`)
+
+The app loads, in order:
+
+1. `.env`
+2. `.env.production` (values here **override** `.env` when both exist)
+
+So you can keep real keys only in **`.env.production`** and still run scripts from any folder.
+
+To use a single custom filename instead, set **`APP_ENV_FILE`** (e.g. `APP_ENV_FILE=.env.production`) in the system environment or shell.
+
 ---
 
 ## Step 1 — Push this repo to GitHub
