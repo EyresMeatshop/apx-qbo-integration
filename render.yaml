@@ -16,20 +16,23 @@ services:
     runtime: python
     plan: starter
     buildCommand: pip install -r requirements.txt
-    startCommand: python -u live_sync_runner.py
+    startCommand: python -u worker_loop.py
     envVars:
       - key: APP_ENV
         value: production
       - key: PYTHON_VERSION
         value: "3.11.9"
+      - key: SYNC_INTERVAL_SECONDS
+        value: "60"
 
   - type: cron
     name: eyres-meat-chop-nightly
     runtime: python
     plan: starter
-    schedule: "0 3 * * *"
+    # Run every minute; script self-gates to Tue–Sat 20:00 AST.
+    schedule: "* * * * *"
     buildCommand: pip install -r requirements.txt
-    startCommand: python -u nightly_sync.py
+    startCommand: python -u scheduled_nightly.py
     envVars:
       - key: APP_ENV
         value: production
