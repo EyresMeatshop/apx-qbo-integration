@@ -4,6 +4,10 @@ import ssl
 from email.message import EmailMessage
 from pathlib import Path
 
+# Ensure dotenv files are loaded (config.py loads .env / .env.production).
+# This matters when running scripts that import email_report directly.
+from config import settings  # noqa: F401
+
 
 def send_email_with_attachment(subject: str, body: str, attachment_path: str) -> None:
     smtp_host = os.getenv("SMTP_HOST", "").strip()
