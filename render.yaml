@@ -10,6 +10,9 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # Must match Intuit Developer → Redirect URIs exactly (same host as this web service).
+      - key: QBO_REDIRECT_URI
+        value: https://eyres-meat-chop-review.onrender.com/qbo-callback
 
   - type: worker
     name: eyres-meat-chop-live-sync
@@ -24,6 +27,8 @@ services:
         value: "3.11.9"
       - key: SYNC_INTERVAL_SECONDS
         value: "60"
+      - key: QBO_REDIRECT_URI
+        value: https://eyres-meat-chop-review.onrender.com/qbo-callback
 
   - type: cron
     name: eyres-meat-chop-nightly
@@ -38,3 +43,5 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: "3.11.9"
+      - key: QBO_REDIRECT_URI
+        value: https://eyres-meat-chop-review.onrender.com/qbo-callback
