@@ -3,10 +3,14 @@ import os
 import secrets
 import requests
 import base64
+from datetime import datetime
+from urllib.parse import quote
 
+from html import escape
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import settings
+from database import init_db, upsert_qbo_tokens
 
 from approval_store import (
     init_approval_tables,
@@ -349,13 +353,16 @@ def apply_review(batch_id):
 @app.route("/connect")
 def connect():
     state = secrets.token_urlsafe(16)
+    client_id = os.getenv("QBO_CLIENT_ID", "")
+    redirect_uri = os.getenv("QBO_REDIRECT_URI", "")
+    # Intuit requires redirect_uri in the authorize URL to be percent-encoded.
     auth_url = (
         "https://appcenter.intuit.com/connect/oauth2"
-        f"?client_id={os.getenv('QBO_CLIENT_ID', '')}"
-        f"&redirect_uri={os.getenv('QBO_REDIRECT_URI', '')}"
+        f"?client_id={quote(client_id, safe='')}"
+        f"&redirect_uri={quote(redirect_uri, safe='')}"
         "&response_type=code"
         "&scope=com.intuit.quickbooks.accounting"
-        f"&state={state}"
+        f"&state={quote(state, safe='')}"
     )
     return redirect(auth_url)
 
@@ -394,7 +401,7 @@ def callback():
     r = requests.post(token_url, headers=headers, data=data, timeout=30)
 
     if not r.ok:
-        return f"Token exchange failed: {r.status_code}", 400
+        return f"Token exchange failed: {r.status_code} {r.text}", 400
 
     token_json = r.json()
     access_token = token_json.get("access_token", "")
@@ -405,7 +412,20 @@ def callback():
     print(f"Access token received: {bool(access_token)}")
     print(f"Refresh token received: {bool(refresh_token)}")
 
-    return redirect("/success")
+    if realm_id and access_token and refresh_token:
+        try:
+            init_db()
+            upsert_qbo_tokens(
+                realm_id,
+                access_token,
+                refresh_token,
+                datetime.utcnow().isoformat(timespec="seconds"),
+            )
+            print("QBO tokens persisted to database.")
+        except Exception as e:
+            print(f"Could not persist QBO tokens to database: {e}")
+
+    return redirect(url_for("success", realm_id=realm_id or ""))
 
 @app.route("/qbo_callback")
 def qbo_callback():
@@ -438,7 +458,21 @@ def qbo_callback():
 
 @app.route("/success")
 def success():
-    return "QuickBooks Connected Successfully"
+    realm_id = (request.args.get("realm_id") or "").strip()
+    body = "<h1>QuickBooks Connected Successfully</h1>"
+    if realm_id:
+        safe = escape(realm_id)
+        body += (
+            f"<p><strong>Realm ID</strong> — set this in Render as <code>QBO_REALM_ID</code> "
+            f"(must match for the app to load stored tokens):</p>"
+            f"<p><code>{safe}</code></p>"
+        )
+    body += (
+        "<p>If your service uses <code>DATABASE_URL</code>, access and refresh tokens "
+        "were saved there. Redeploy or restart workers so they pick up "
+        "<code>QBO_REALM_ID</code> if you just added it.</p>"
+    )
+    return body
 
 
 @app.route("/privacy")
