@@ -377,7 +377,17 @@ def callback():
     realm_id = request.args.get("realmId")
 
     if not auth_code:
-        return "Missing auth code.", 400
+        return (
+            "<h1>QuickBooks connect</h1>"
+            "<p>No authorization <code>code</code> was sent to this page. That is normal if you opened "
+            "this URL directly.</p>"
+            "<p>Start here instead: "
+            '<a href="/connect">/connect</a> — sign in with Intuit; you will be sent back here '
+            "with a code automatically.</p>"
+            "<p>Use the callback path <strong>/qbo-callback</strong> (with a hyphen) in Intuit and in "
+            "<code>QBO_REDIRECT_URI</code>.</p>",
+            400,
+        )
 
     client_id = os.getenv("QBO_CLIENT_ID", "")
     client_secret = os.getenv("QBO_CLIENT_SECRET", "")
@@ -428,32 +438,10 @@ def callback():
     return redirect(url_for("success", realm_id=realm_id or ""))
 
 @app.route("/qbo_callback")
-def qbo_callback():
-    from intuitlib.client import AuthClient
-    import os
-
-    auth_client = AuthClient(
-        client_id=os.getenv("QBO_CLIENT_ID"),
-        client_secret=os.getenv("QBO_CLIENT_SECRET"),
-        environment=os.getenv("QBO_ENVIRONMENT"),
-        redirect_uri=os.getenv("QBO_REDIRECT_URI"),
-    )
-
-    auth_code = request.args.get("code")
-    realm_id = request.args.get("realmId")
-
-    auth_client.get_bearer_token(auth_code, realm_id=realm_id)
-
-    access_token = auth_client.access_token
-    refresh_token = auth_client.refresh_token
-
-    print("\n=== NEW TOKENS GENERATED ===")
-    print(f"QBO_ACCESS_TOKEN={access_token}")
-    print(f"QBO_REFRESH_TOKEN={refresh_token}")
-    print(f"QBO_REALM_ID={realm_id}")
-    print("===========================\n")
-
-    return "QuickBooks Connected Successfully"
+def qbo_callback_legacy():
+    """Underscore URL: redirect to canonical /qbo-callback so OAuth ?code=... is preserved."""
+    qs = dict(request.args)
+    return redirect(url_for("callback", **qs), code=307)
 
 
 @app.route("/success")
