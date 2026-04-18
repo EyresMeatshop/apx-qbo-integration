@@ -136,25 +136,39 @@ Set these at least on the **cron** service (safe to set everywhere):
 - **`EMAIL_TO`**: comma-separated list, e.g. `me@example.com,you@example.com`
 
 ### Required (review link in email)
-- **`APP_BASE_URL`**: your public Render web URL, e.g. `https://your-service.onrender.com`
+- **`APP_BASE_URL`**: your public Render web URL, e.g. `https://eyres-meat-chop-review.onrender.com` (must match the web service hostname)
 
 ### Recommended
 - **`DRY_RUN`**: `false` (production should write changes)
-- **`REVIEW_USERNAME`** / **`REVIEW_PASSWORD`**: required if you want to log into the review UI
+- **Review UI logins** (choose one approach):
+  - **`REVIEW_USERNAME`** / **`REVIEW_PASSWORD`** — single reviewer, or
+  - **`REVIEW_USERS_JSON`** — JSON array of objects `{ "username": "email@...", "password": "..." }` for multiple reviewers (set on the **web** service; do not commit this string to git)
+- **`REVIEW_SEED_TOKEN`** (recommended): random secret; if set, `/seed-review-user` only works as `YOUR_APP_BASE_URL/seed-review-user?token=YOUR_TOKEN` so strangers cannot create accounts
 - **`SESSION_COOKIE_SECURE`**: `true` (forces secure cookies; production already defaults to secure)
 
 ---
 
-## Step 5 — First-time setup (review user)
+## Step 5 — First-time setup (review users)
 
-After the web service is up:
+After the web service is up and **`DATABASE_URL`** is set:
 
-1. Visit:
-   - `YOUR_APP_BASE_URL/seed-review-user`
-2. It will create the review user using `REVIEW_USERNAME` / `REVIEW_PASSWORD`.
+1. Add **`REVIEW_USERS_JSON`** (or **`REVIEW_USERNAME`** / **`REVIEW_PASSWORD`**) to the **web** service environment on Render.
+2. Optionally set **`REVIEW_SEED_TOKEN`** and open once in a browser:
+   - `https://YOUR-SERVICE.onrender.com/seed-review-user?token=YOUR_TOKEN`  
+   Or omit the token if **`REVIEW_SEED_TOKEN`** is not set (less secure).
+3. Remove or clear **`REVIEW_USERS_JSON`** from the dashboard after users are created so passwords are not stored long-term in env.
 
-Then you can log in at:
-- `YOUR_APP_BASE_URL/login`
+Alternatively, from a machine with the same **`DATABASE_URL`**, run:
+
+```bash
+python seed_review_users_json.py
+```
+
+Then log in at:
+
+- `https://YOUR-SERVICE.onrender.com/login`
+
+The nightly email links to `/login?next=/review/BATCH_ID`. After login, each discrepancy has **Fix Loyverse** (match QBO), **Fix QBO** (match Loyverse), or **Do nothing**.
 
 ---
 

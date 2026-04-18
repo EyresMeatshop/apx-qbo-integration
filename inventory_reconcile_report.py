@@ -12,6 +12,11 @@ from approval_store import init_approval_tables, create_batch, add_reconcile_ite
 REPORTS_DIR = Path("reports")
 REPORTS_DIR.mkdir(exist_ok=True)
 
+# QBO is the source of truth for on-hand quantity. Rows here are mismatches where
+# Loyverse variant stock != QBO QtyOnHand. Suggested action LOYVERSE = update Loyverse to qbo_qty.
+
+QTY_EPSILON = 1e-4
+
 
 def safe_float(value, default=0.0):
     try:
@@ -20,20 +25,6 @@ def safe_float(value, default=0.0):
         return float(value)
     except Exception:
         return default
-
-
-def get_loyverse_stock_qty(item: dict) -> float:
-    for key in [
-        "in_stock",
-        "stock",
-        "quantity",
-        "available_quantity",
-        "current_stock",
-        "inventory_count",
-    ]:
-        if key in item:
-            return safe_float(item.get(key), 0.0)
-    return 0.0
 
 
 def load_item_map():
@@ -50,15 +41,6 @@ def load_item_map():
         conn.close()
 
 
-def build_loyverse_index(items: list[dict]) -> dict[str, dict]:
-    idx = {}
-    for item in items:
-        item_id = item.get("id")
-        if item_id:
-            idx[item_id] = item
-    return idx
-
-
 def build_qbo_index(items: list[dict]) -> dict[str, dict]:
     idx = {}
     for item in items:
@@ -68,29 +50,34 @@ def build_qbo_index(items: list[dict]) -> dict[str, dict]:
     return idx
 
 
-def generate_inventory_report() -> tuple[str, str]:
+def generate_inventory_report() -> tuple[str, str, int]:
+    """
+    Compare mapped items: Loyverse variant on-hand vs QBO QtyOnHand.
+
+    Returns (report_path, batch_id, mismatch_count). QBO quantity is treated as correct;
+    ``difference`` = loyverse_qty - qbo_qty (positive means Loyverse is high).
+    """
     init_db()
     init_approval_tables()
 
     loy = LoyverseClient()
     qbo = QBOClient()
 
-    loy_items_raw = loy.get_items()
-    loy_items = loy_items_raw.get("items", []) if isinstance(loy_items_raw, dict) else []
+    # Same variant-level stock used for inventory API updates (not raw item fields).
+    variant_index = loy.build_item_variant_index()
 
-    qbo_items_raw = qbo.get_items()
-    qbo_items = qbo_items_raw.get("QueryResponse", {}).get("Item", [])
+    qbo_items_list = qbo.get_all_items()
+    qbo_idx = build_qbo_index(qbo_items_list)
 
     item_map_rows = load_item_map()
-
-    loy_idx = build_loyverse_index(loy_items)
-    qbo_idx = build_qbo_index(qbo_items)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_id = f"{settings.QBO_ENVIRONMENT}_{timestamp}"
     report_path = REPORTS_DIR / f"inventory_reconcile_{batch_id}.csv"
 
     create_batch(batch_id, settings.QBO_ENVIRONMENT)
+
+    mismatch_count = 0
 
     with report_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -102,7 +89,9 @@ def generate_inventory_report() -> tuple[str, str]:
                 "loyverse_qty",
                 "qbo_qty",
                 "difference",
+                "source_of_truth",
                 "suggested_action",
+                "recommended_fix",
                 "approved_action",
             ],
         )
@@ -113,17 +102,18 @@ def generate_inventory_report() -> tuple[str, str]:
             qbo_item_id = str(row["qbo_item_id"])
             item_name = row["loyverse_name"] or row["qbo_name"] or ""
 
-            loy_item = loy_idx.get(loy_item_id, {})
-            qbo_item = qbo_idx.get(qbo_item_id, {})
+            vinfo = variant_index.get(loy_item_id) or {}
+            loy_qty = safe_float(vinfo.get("in_stock"), 0.0)
 
-            loy_qty = get_loyverse_stock_qty(loy_item)
+            qbo_item = qbo_idx.get(qbo_item_id, {})
             qbo_qty = safe_float(qbo_item.get("QtyOnHand"), 0.0)
 
             diff = loy_qty - qbo_qty
 
-            if abs(diff) < 0.0001:
+            if abs(diff) < QTY_EPSILON:
                 continue
 
+            mismatch_count += 1
             suggested_action = "LOYVERSE"
 
             writer.writerow(
@@ -134,7 +124,9 @@ def generate_inventory_report() -> tuple[str, str]:
                     "loyverse_qty": loy_qty,
                     "qbo_qty": qbo_qty,
                     "difference": diff,
+                    "source_of_truth": "QBO",
                     "suggested_action": suggested_action,
+                    "recommended_fix": "Set Loyverse stock to QBO QtyOnHand when approved",
                     "approved_action": "",
                 }
             )
@@ -150,4 +142,4 @@ def generate_inventory_report() -> tuple[str, str]:
                 suggested_action=suggested_action,
             )
 
-    return str(report_path), batch_id
+    return str(report_path), batch_id, mismatch_count

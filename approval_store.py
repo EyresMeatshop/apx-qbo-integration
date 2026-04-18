@@ -211,6 +211,97 @@ def get_batch_items(batch_id: str):
         conn.close()
 
 
+def get_reconcile_item(batch_id: str, item_id: int):
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT *
+            FROM reconcile_items
+            WHERE batch_id = ? AND id = ?
+            LIMIT 1
+        """, (batch_id, item_id))
+        return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def finalize_batch_if_all_items_done(batch_id: str, username: str):
+    """When every reconcile line is no longer pending, mark the batch as applied."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) AS c FROM reconcile_items WHERE batch_id = ?",
+            (batch_id,),
+        )
+        total = int(cur.fetchone()["c"])
+        if total == 0:
+            return
+        cur.execute(
+            """
+            SELECT COUNT(*) AS c FROM reconcile_items
+            WHERE batch_id = ? AND status = 'pending'
+            """,
+            (batch_id,),
+        )
+        pending = int(cur.fetchone()["c"])
+        if pending > 0:
+            return
+        cur.execute(
+            """
+            UPDATE reconcile_batches
+            SET status = 'applied', applied_by = ?, applied_at = ?
+            WHERE batch_id = ?
+            """,
+            (username, utc_now(), batch_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def complete_reconcile_item(
+    batch_id: str,
+    item_id: int,
+    approved_action: str,
+    username: str,
+    outcome_status: str,
+):
+    """
+    Record final decision and mark row complete.
+    outcome_status: 'applied' (stock was updated or ignore recorded) or 'ignored'.
+    """
+    now = utc_now()
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE reconcile_items
+            SET approved_action = ?,
+                updated_at = ?,
+                saved_by = ?,
+                saved_at = ?,
+                status = ?,
+                applied_by = ?,
+                applied_at = ?
+            WHERE id = ? AND batch_id = ?
+        """, (
+            approved_action,
+            now,
+            username,
+            now,
+            outcome_status,
+            username,
+            now,
+            item_id,
+            batch_id,
+        ))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def add_reconcile_item(
     batch_id: str,
     loyverse_item_id: str,
