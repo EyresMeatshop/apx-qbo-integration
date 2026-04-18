@@ -41,6 +41,24 @@ def load_item_map():
         conn.close()
 
 
+def count_item_map_rows() -> int:
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM item_map
+            WHERE qbo_environment = ?
+            """,
+            (settings.QBO_ENVIRONMENT,),
+        )
+        row = cur.fetchone()
+        return int(row["c"] if isinstance(row, dict) else row[0])
+    finally:
+        conn.close()
+
+
 def build_qbo_index(items: list[dict]) -> dict[str, dict]:
     idx = {}
     for item in items:
@@ -50,12 +68,12 @@ def build_qbo_index(items: list[dict]) -> dict[str, dict]:
     return idx
 
 
-def generate_inventory_report() -> tuple[str, str, int]:
+def generate_inventory_report() -> tuple[str, str, int, int]:
     """
     Compare mapped items: Loyverse variant on-hand vs QBO QtyOnHand.
 
-    Returns (report_path, batch_id, mismatch_count). QBO quantity is treated as correct;
-    ``difference`` = loyverse_qty - qbo_qty (positive means Loyverse is high).
+    Returns (report_path, batch_id, mismatch_count, mapped_pairs_count).
+    Only rows in ``item_map`` for ``QBO_ENVIRONMENT`` are compared; unmapped items never appear.
     """
     init_db()
     init_approval_tables()
@@ -70,6 +88,7 @@ def generate_inventory_report() -> tuple[str, str, int]:
     qbo_idx = build_qbo_index(qbo_items_list)
 
     item_map_rows = load_item_map()
+    mapped_pairs_count = len(item_map_rows)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     batch_id = f"{settings.QBO_ENVIRONMENT}_{timestamp}"
@@ -78,6 +97,7 @@ def generate_inventory_report() -> tuple[str, str, int]:
     create_batch(batch_id, settings.QBO_ENVIRONMENT)
 
     mismatch_count = 0
+    compared_equal = 0
 
     with report_path.open("w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(
@@ -111,6 +131,7 @@ def generate_inventory_report() -> tuple[str, str, int]:
             diff = loy_qty - qbo_qty
 
             if abs(diff) < QTY_EPSILON:
+                compared_equal += 1
                 continue
 
             mismatch_count += 1
@@ -142,4 +163,16 @@ def generate_inventory_report() -> tuple[str, str, int]:
                 suggested_action=suggested_action,
             )
 
-    return str(report_path), batch_id, mismatch_count
+    print(
+        f"Inventory reconcile: environment={settings.QBO_ENVIRONMENT} | "
+        f"item_map pairs={mapped_pairs_count} | "
+        f"matching qty (no row)={compared_equal} | "
+        f"mismatches written={mismatch_count}"
+    )
+    if mapped_pairs_count == 0:
+        print(
+            "WARNING: item_map has no rows for this QBO environment. "
+            "Run: python sync_items_loyverse_to_qbo.py (Render Shell) to build mappings, then rerun nightly."
+        )
+
+    return str(report_path), batch_id, mismatch_count, mapped_pairs_count

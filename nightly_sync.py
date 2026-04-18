@@ -16,8 +16,14 @@ def main():
     print(
         "\nStep 2: Stock consistency check — QBO is source of truth vs Loyverse (mapped items)"
     )
-    report_path, batch_id, mismatch_count = generate_inventory_report()
+    report_path, batch_id, mismatch_count, mapped_pairs = generate_inventory_report()
     print(f"Report file: {report_path}")
+    print(f"Mapped Loyverse↔QBO pairs in database: {mapped_pairs}")
+    if mapped_pairs == 0:
+        print(
+            "WARNING: No rows in item_map for this environment — reconciliation compares nothing. "
+            "Run sync_items_loyverse_to_qbo.py on Render to populate item_map."
+        )
     if mismatch_count == 0:
         print("No stock inconsistencies found for mapped items (Loyverse variant qty vs QBO QtyOnHand).")
     else:

@@ -25,6 +25,7 @@ from approval_store import (
     get_audit_log,
 )
 from reconcile_actions import fix_loyverse_to_match_qbo, fix_qbo_to_match_loyverse
+from inventory_reconcile_report import count_item_map_rows
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", secrets.token_urlsafe(32))
@@ -227,6 +228,10 @@ def review_batch(batch_id):
     items = get_batch_items(batch_id)
     audit_rows = get_audit_log(batch_id)
     csrf_token = generate_csrf_token()
+    try:
+        item_map_count = count_item_map_rows()
+    except Exception:
+        item_map_count = -1
 
     return render_template_string("""
         <!DOCTYPE html>
@@ -255,6 +260,7 @@ def review_batch(batch_id):
                 .pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.8rem; }
                 .pill.pending { background: #fef7e0; color: #b06000; }
                 .pill.done { background: #e8f0fe; color: #1967d2; }
+                .callout { background: #e8f0fe; border: 1px solid #1967d2; border-radius: 8px; padding: 1rem; margin: 1rem 0; font-size: 0.95rem; line-height: 1.5; }
             </style>
         </head>
         <body>
@@ -263,6 +269,22 @@ def review_batch(batch_id):
         <p class="meta">Batch <code>{{ batch_id }}</code> &nbsp;|&nbsp; Logged in as <b>{{ username }}</b>
            &nbsp;|&nbsp; <a href="{{ url_for('logout') }}">Logout</a></p>
         <p>QBO quantity is the default source of truth in reports. Use the buttons to align one system or skip.</p>
+        <p class="meta">Environment <code>{{ qbo_environment }}</code> — Loyverse↔QBO pairs in <code>item_map</code> right now: <strong>{{ item_map_count if item_map_count >= 0 else "?" }}</strong></p>
+
+        {% if items|length == 0 %}
+        <div class="callout">
+            <strong>Why is this batch empty?</strong>
+            <ul style="margin:0.5rem 0 0 1rem;">
+                <li>The nightly job only compares products that are <strong>linked in the database</strong> (<code>item_map</code>). It does <em>not</em> compare your full Loyverse catalog to your full QBO list by name.</li>
+                <li>If <code>item_map</code> is empty (0 pairs), every batch will have <strong>no discrepancy rows</strong> even when the two UIs look different.</li>
+                <li>If pairs exist but quantities match (per API), you also get no rows.</li>
+            </ul>
+            <p style="margin:0.75rem 0 0 0;"><strong>Fix:</strong> On Render → your worker or web → <strong>Shell</strong>, run:</p>
+            <pre style="background:#fff;padding:0.5rem;border-radius:4px;overflow:auto;">python sync_items_loyverse_to_qbo.py
+python check_mappings.py</pre>
+            Then run a new report: <code>python nightly_sync.py</code> (or wait for cron). Open the <strong>new</strong> email link / batch id.
+        </div>
+        {% endif %}
 
         {% with messages = get_flashed_messages(with_categories=true) %}
           {% if messages %}
@@ -349,6 +371,8 @@ def review_batch(batch_id):
         audit_rows=audit_rows,
         username=current_user(),
         csrf_token=csrf_token,
+        item_map_count=item_map_count,
+        qbo_environment=settings.QBO_ENVIRONMENT,
     )
 
 
