@@ -384,9 +384,9 @@ def review_batch(batch_id):
                 button.btn-qbo { background: #188038; color: #fff; border: none; padding: 0.45rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
                 button.btn-skip { background: #fff; color: #5f6368; border: 1px solid #dadce0; padding: 0.45rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
                 button.btn-submit { background: #202124; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; margin-top: 0.5rem; }
-                .row-apply { max-width: 22rem; }
-                .choice-row { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
-                .choice-row label { cursor: pointer; }
+                .action-btns button { transition: box-shadow 0.15s, transform 0.1s; }
+                .action-btns button:hover { filter: brightness(1.05); }
+                .action-btns button.picked { box-shadow: 0 0 0 2px #202124; }
                 .pw-label { display: block; font-size: 0.8rem; font-weight: 600; margin-top: 0.25rem; }
                 .pw-input { width: 100%; max-width: 16rem; box-sizing: border-box; padding: 0.35rem 0.5rem; margin: 0.2rem 0 0.35rem 0; }
                 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -432,7 +432,7 @@ python check_mappings.py</pre>
         {% endwith %}
 
         {% if has_pending %}
-        <form method="post" action="{{ url_for('review_apply_batch', batch_id=batch_id) }}">
+        <form id="batch-reconcile-form" method="post" action="{{ url_for('review_apply_batch', batch_id=batch_id) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         {% endif %}
         <table class="data">
@@ -455,10 +455,11 @@ python check_mappings.py</pre>
                     <td>{{ row["difference"] }}</td>
                     <td>
                         {% if row["status"] == "pending" %}
-                        <div class="choice-row">
-                            <label><input type="radio" name="reconcile_action_{{ row['id'] }}" value="LOYVERSE" required> Fix Loyverse (→ QBO {{ row['qbo_qty'] }})</label>
-                            <label><input type="radio" name="reconcile_action_{{ row['id'] }}" value="QBO"> Fix QBO (→ Loyverse {{ row['loyverse_qty'] }})</label>
-                            <label><input type="radio" name="reconcile_action_{{ row['id'] }}" value="IGNORE"> Do nothing</label>
+                        <input type="hidden" name="reconcile_action_{{ row['id'] }}" id="action-{{ row['id'] }}" value="">
+                        <div class="actions action-btns" role="group" aria-label="Choose action for this line">
+                            <button type="button" class="btn-loy js-pick-action" data-row-id="{{ row['id'] }}" data-action="LOYVERSE" title="Set Loyverse to QBO {{ row['qbo_qty'] }}">Fix Loyverse</button>
+                            <button type="button" class="btn-qbo js-pick-action" data-row-id="{{ row['id'] }}" data-action="QBO" title="Set QBO to Loyverse {{ row['loyverse_qty'] }}">Fix QBO</button>
+                            <button type="button" class="btn-skip js-pick-action" data-row-id="{{ row['id'] }}" data-action="IGNORE" title="Leave both unchanged">Do nothing</button>
                         </div>
                         {% else %}
                         <span class="meta">Processed</span>
@@ -480,7 +481,35 @@ python check_mappings.py</pre>
                 <input id="batch-pw" class="pw-input" type="password" name="confirm_password" autocomplete="current-password" required placeholder="Same password as login">
                 <div style="margin-top:0.75rem;"><button type="submit" class="btn-submit">Submit batch</button></div>
             </div>
-        </form>
+        <script>
+        (function () {
+          var form = document.getElementById("batch-reconcile-form");
+          if (!form) return;
+          form.querySelectorAll(".js-pick-action").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              var rowId = btn.getAttribute("data-row-id");
+              var act = btn.getAttribute("data-action");
+              var hid = document.getElementById("action-" + rowId);
+              if (hid) hid.value = act;
+              var wrap = btn.closest(".action-btns");
+              if (wrap) {
+                wrap.querySelectorAll("button").forEach(function (b) { b.classList.remove("picked"); });
+                btn.classList.add("picked");
+              }
+            });
+          });
+          form.addEventListener("submit", function (ev) {
+            var missing = [];
+            form.querySelectorAll('input[type="hidden"][name^="reconcile_action_"]').forEach(function (h) {
+              if (!h.value) missing.push(h.name);
+            });
+            if (missing.length) {
+              ev.preventDefault();
+              alert("Choose Fix Loyverse, Fix QBO, or Do nothing for every pending line before submitting.");
+            }
+          });
+        })();
+        </script>
         {% endif %}
 
         <h3 style="margin-top:2rem;">Audit trail</h3>
