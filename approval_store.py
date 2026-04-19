@@ -161,6 +161,25 @@ def create_user(username: str, password_hash: str):
         conn.close()
 
 
+def update_user_password(username: str, password_hash: str) -> bool:
+    """Set a new password hash for an active review user. Returns True if a row was updated."""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE review_users
+            SET password_hash = ?
+            WHERE username = ? AND is_active = 1
+        """, (password_hash, username))
+        conn.commit()
+        rc = getattr(cur, "rowcount", None)
+        if rc is not None:
+            return int(rc) > 0
+        return True
+    finally:
+        conn.close()
+
+
 def create_batch(batch_id: str, environment: str):
     conn = get_conn()
     try:

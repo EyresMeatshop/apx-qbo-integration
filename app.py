@@ -21,6 +21,7 @@ from approval_store import (
     finalize_batch_if_all_items_done,
     get_user_by_username,
     create_user,
+    update_user_password,
     log_audit,
     get_audit_log,
 )
@@ -206,6 +207,120 @@ def login():
     """, error=error, next_url=next_url, csrf_token=csrf_token)
 
 
+_MIN_NEW_PASSWORD_LEN = 10
+
+
+def _safe_internal_path(raw: str | None) -> str | None:
+    """Allow only same-origin paths like /review/... for 'next' links."""
+    s = (raw or "").strip()
+    if not s or not s.startswith("/") or s.startswith("//"):
+        return None
+    if " " in s or "\n" in s:
+        return None
+    if len(s) > 512:
+        return None
+    return s
+
+
+@app.route("/change-password", methods=["GET", "POST"])
+def change_password():
+    if not require_login():
+        return redirect(url_for("login", next="/change-password"))
+
+    username = current_user()
+    error = ""
+    if request.method == "POST":
+        back_review = _safe_internal_path(request.form.get("next") or request.args.get("next"))
+    else:
+        back_review = _safe_internal_path(request.args.get("next"))
+
+    if request.method == "POST":
+        csrf_token = request.form.get("csrf_token", "")
+        if not validate_csrf_token(csrf_token):
+            return "Invalid CSRF token.", 403
+
+        current_pw = request.form.get("current_password", "")
+        new_pw = request.form.get("new_password", "")
+        confirm_pw = request.form.get("new_password_confirm", "")
+
+        user = get_user_by_username(username)
+        if not user or not check_password_hash(user["password_hash"], current_pw):
+            error = "Current password is incorrect."
+        elif len(new_pw) < _MIN_NEW_PASSWORD_LEN:
+            error = f"New password must be at least {_MIN_NEW_PASSWORD_LEN} characters."
+        elif new_pw != confirm_pw:
+            error = "New password and confirmation do not match."
+        elif new_pw == current_pw:
+            error = "Choose a new password that is different from your current one."
+        else:
+            new_hash = generate_password_hash(new_pw, method="pbkdf2:sha256")
+            if not update_user_password(username, new_hash):
+                error = "Could not update password. Try again or contact support."
+            else:
+                log_audit(
+                    batch_id="SECURITY",
+                    username=username,
+                    action_type="password_change",
+                    details="Review user changed their password",
+                )
+                flash("Your password was updated. Use it next time you log in.", "success")
+                q = f"?next={quote(back_review)}" if back_review else ""
+                return redirect(url_for("change_password") + q)
+
+    csrf_token = generate_csrf_token()
+    return render_template_string(
+        """
+        <!DOCTYPE html>
+        <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>Change password — Eyre's Meat Chop</title>
+        <style>
+            body { font-family: system-ui, sans-serif; background: #f6f7f9; margin: 0; padding: 2rem; }
+            .box { max-width: 440px; margin: 0 auto; background: #fff; padding: 1.5rem; border-radius: 8px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+            h2 { margin-top: 0; }
+            label { display: block; margin-top: 0.75rem; font-weight: 500; }
+            input[type=password] { width: 100%; box-sizing: border-box; padding: 0.5rem; margin-top: 0.25rem; }
+            button { margin-top: 1rem; padding: 0.5rem 1rem; background: #1a73e8; color: #fff; border: none;
+                     border-radius: 4px; cursor: pointer; }
+            .err { color: #c5221f; }
+            .meta { color: #5f6368; font-size: 0.9rem; margin-top: 1rem; }
+            .flash.success { background: #e6f4ea; color: #137333; padding: 0.65rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+        </style></head><body>
+        <div class="box">
+        <h2>Change password</h2>
+        <p class="meta">Signed in as <b>{{ username }}</b></p>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+          {% if messages %}
+            {% for category, message in messages %}
+              <div class="flash {{ category }}">{{ message }}</div>
+            {% endfor %}
+          {% endif %}
+        {% endwith %}
+        {% if error %}<p class="err">{{ error }}</p>{% endif %}
+        <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% if back_review %}<input type="hidden" name="next" value="{{ back_review }}">{% endif %}
+            <label>Current password</label>
+            <input type="password" name="current_password" autocomplete="current-password" required>
+            <label>New password (min {{ min_len }} characters)</label>
+            <input type="password" name="new_password" autocomplete="new-password" required minlength="{{ min_len }}">
+            <label>Confirm new password</label>
+            <input type="password" name="new_password_confirm" autocomplete="new-password" required minlength="{{ min_len }}">
+            <button type="submit">Update password</button>
+        </form>
+        <p class="meta"><a href="{{ url_for('logout') }}">Logout</a>
+        {% if back_review %} · <a href="{{ back_review }}">Back to review</a>{% endif %}</p>
+        </div>
+        </body></html>
+        """,
+        username=username,
+        error=error,
+        csrf_token=csrf_token,
+        min_len=_MIN_NEW_PASSWORD_LEN,
+        back_review=back_review,
+    )
+
+
 def _review_post_guard(batch_id: str):
     if not require_login():
         return redirect(url_for("login", next=f"/review/{batch_id}"))
@@ -267,6 +382,7 @@ def review_batch(batch_id):
         <div class="wrap">
         <h2>Eyre's Meat Chop — stock reconciliation</h2>
         <p class="meta">Batch <code>{{ batch_id }}</code> &nbsp;|&nbsp; Logged in as <b>{{ username }}</b>
+           &nbsp;|&nbsp; <a href="{{ url_for('change_password', next='/review/' ~ batch_id) }}">Change password</a>
            &nbsp;|&nbsp; <a href="{{ url_for('logout') }}">Logout</a></p>
         <p>QBO quantity is the default source of truth in reports. Use the buttons to align one system or skip.</p>
         <p class="meta">Environment <code>{{ qbo_environment }}</code> — Loyverse↔QBO pairs in <code>item_map</code> right now: <strong>{{ item_map_count if item_map_count >= 0 else "?" }}</strong></p>
