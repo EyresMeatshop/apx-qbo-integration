@@ -57,6 +57,17 @@ def current_user():
     return session.get("review_user")
 
 
+def verify_logged_in_password(password: str) -> bool:
+    """True if password matches the logged-in review user (for re-authentication)."""
+    username = current_user()
+    if not username or password is None:
+        return False
+    user = get_user_by_username(username)
+    if not user:
+        return False
+    return check_password_hash(user["password_hash"], password)
+
+
 def require_login():
     return bool(current_user())
 
@@ -348,6 +359,8 @@ def review_batch(batch_id):
     except Exception:
         item_map_count = -1
 
+    has_pending = any((r["status"] == "pending") for r in items)
+
     return render_template_string("""
         <!DOCTYPE html>
         <html lang="en">
@@ -370,12 +383,20 @@ def review_batch(batch_id):
                 button.btn-loy { background: #1a73e8; color: #fff; border: none; padding: 0.45rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
                 button.btn-qbo { background: #188038; color: #fff; border: none; padding: 0.45rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
                 button.btn-skip { background: #fff; color: #5f6368; border: 1px solid #dadce0; padding: 0.45rem 0.75rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; }
+                button.btn-submit { background: #202124; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.875rem; margin-top: 0.5rem; }
+                .row-apply { max-width: 22rem; }
+                .choice-row { display: flex; flex-direction: column; gap: 0.35rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
+                .choice-row label { cursor: pointer; }
+                .pw-label { display: block; font-size: 0.8rem; font-weight: 600; margin-top: 0.25rem; }
+                .pw-input { width: 100%; max-width: 16rem; box-sizing: border-box; padding: 0.35rem 0.5rem; margin: 0.2rem 0 0.35rem 0; }
                 button:disabled { opacity: 0.5; cursor: not-allowed; }
                 .meta { color: #5f6368; font-size: 0.9rem; }
                 .pill { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 999px; font-size: 0.8rem; }
                 .pill.pending { background: #fef7e0; color: #b06000; }
                 .pill.done { background: #e8f0fe; color: #1967d2; }
                 .callout { background: #e8f0fe; border: 1px solid #1967d2; border-radius: 8px; padding: 1rem; margin: 1rem 0; font-size: 0.95rem; line-height: 1.5; }
+                .batch-footer { margin-top: 1rem; padding: 1rem 1.25rem; background: #fff; border: 1px solid #dadce0; border-radius: 8px; max-width: 28rem; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+                .batch-footer .pw-input { max-width: 20rem; }
             </style>
         </head>
         <body>
@@ -384,7 +405,7 @@ def review_batch(batch_id):
         <p class="meta">Batch <code>{{ batch_id }}</code> &nbsp;|&nbsp; Logged in as <b>{{ username }}</b>
            &nbsp;|&nbsp; <a href="{{ url_for('change_password', next='/review/' ~ batch_id) }}">Change password</a>
            &nbsp;|&nbsp; <a href="{{ url_for('logout') }}">Logout</a></p>
-        <p>QBO quantity is the default source of truth in reports. Use the buttons to align one system or skip.</p>
+        <p>QBO quantity is the default source of truth in reports. For <strong>each pending line</strong>, choose an action, then enter <strong>your login password</strong> once and click <strong>Submit batch</strong> to apply all choices (logged under your account).</p>
         <p class="meta">Environment <code>{{ qbo_environment }}</code> — Loyverse↔QBO pairs in <code>item_map</code> right now: <strong>{{ item_map_count if item_map_count >= 0 else "?" }}</strong></p>
 
         {% if items|length == 0 %}
@@ -410,6 +431,10 @@ python check_mappings.py</pre>
           {% endif %}
         {% endwith %}
 
+        {% if has_pending %}
+        <form method="post" action="{{ url_for('review_apply_batch', batch_id=batch_id) }}">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        {% endif %}
         <table class="data">
             <thead>
                 <tr>
@@ -430,22 +455,10 @@ python check_mappings.py</pre>
                     <td>{{ row["difference"] }}</td>
                     <td>
                         {% if row["status"] == "pending" %}
-                        <div class="actions">
-                            <form method="post" action="{{ url_for('review_fix_loyverse', batch_id=batch_id, item_id=row['id']) }}"
-                                  onsubmit="return confirm('Set Loyverse stock to {{ row['qbo_qty'] }} (match QBO)?');">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn-loy">Fix Loyverse</button>
-                            </form>
-                            <form method="post" action="{{ url_for('review_fix_qbo', batch_id=batch_id, item_id=row['id']) }}"
-                                  onsubmit="return confirm('Set QBO quantity to {{ row['loyverse_qty'] }} (match Loyverse)?');">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn-qbo">Fix QBO</button>
-                            </form>
-                            <form method="post" action="{{ url_for('review_skip_item', batch_id=batch_id, item_id=row['id']) }}"
-                                  onsubmit="return confirm('Leave both systems unchanged for this item?');">
-                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                                <button type="submit" class="btn-skip">Do nothing</button>
-                            </form>
+                        <div class="choice-row">
+                            <label><input type="radio" name="reconcile_action_{{ row['id'] }}" value="LOYVERSE" required> Fix Loyverse (→ QBO {{ row['qbo_qty'] }})</label>
+                            <label><input type="radio" name="reconcile_action_{{ row['id'] }}" value="QBO"> Fix QBO (→ Loyverse {{ row['loyverse_qty'] }})</label>
+                            <label><input type="radio" name="reconcile_action_{{ row['id'] }}" value="IGNORE"> Do nothing</label>
                         </div>
                         {% else %}
                         <span class="meta">Processed</span>
@@ -461,6 +474,14 @@ python check_mappings.py</pre>
             {% endfor %}
             </tbody>
         </table>
+        {% if has_pending %}
+            <div class="batch-footer">
+                <label class="pw-label" for="batch-pw">Your password (confirm identity for this batch)</label>
+                <input id="batch-pw" class="pw-input" type="password" name="confirm_password" autocomplete="current-password" required placeholder="Same password as login">
+                <div style="margin-top:0.75rem;"><button type="submit" class="btn-submit">Submit batch</button></div>
+            </div>
+        </form>
+        {% endif %}
 
         <h3 style="margin-top:2rem;">Audit trail</h3>
         <table class="data">
@@ -489,103 +510,125 @@ python check_mappings.py</pre>
         csrf_token=csrf_token,
         item_map_count=item_map_count,
         qbo_environment=settings.QBO_ENVIRONMENT,
+        has_pending=has_pending,
     )
 
 
-@app.route("/review/<batch_id>/item/<int:item_id>/fix-loyverse", methods=["POST"])
-def review_fix_loyverse(batch_id, item_id):
-    redir = _review_post_guard(batch_id)
-    if redir is not None:
-        return redir
-
-    username = current_user()
+def _apply_one_reconcile_line(batch_id: str, item_id: int, action: str, username: str, who_prefix: str) -> None | str:
+    """
+    Apply a single reconcile action. Returns None on success, or an error message string.
+    """
     row = get_reconcile_item(batch_id, item_id)
     if not row:
-        flash("Row not found.", "error")
-        return redirect(url_for("review_batch", batch_id=batch_id))
+        return "Row not found."
     if row["status"] != "pending":
-        flash("This line was already processed.", "error")
-        return redirect(url_for("review_batch", batch_id=batch_id))
+        return "Line already processed."
 
-    try:
-        fix_loyverse_to_match_qbo(row)
-        complete_reconcile_item(batch_id, item_id, "LOYVERSE", username, "applied")
+    if action == "IGNORE":
+        complete_reconcile_item(batch_id, item_id, "IGNORE", username, "ignored")
         log_audit(
             batch_id=batch_id,
             reconcile_item_id=item_id,
             username=username,
-            action_type="apply_loyverse",
-            new_value="LOYVERSE",
-            details="Loyverse stock set to QBO QtyOnHand",
+            action_type="apply_ignore",
+            new_value="IGNORE",
+            details=who_prefix + "No inventory changes (Do nothing).",
         )
-        flash("Loyverse inventory updated to match QuickBooks.", "success")
-        finalize_batch_if_all_items_done(batch_id, username)
-    except Exception as e:
-        flash(str(e), "error")
+        return None
 
-    return redirect(url_for("review_batch", batch_id=batch_id))
+    if action == "LOYVERSE":
+        try:
+            fix_loyverse_to_match_qbo(row)
+            complete_reconcile_item(batch_id, item_id, "LOYVERSE", username, "applied")
+            log_audit(
+                batch_id=batch_id,
+                reconcile_item_id=item_id,
+                username=username,
+                action_type="apply_loyverse",
+                new_value="LOYVERSE",
+                details=who_prefix + "Loyverse stock set to QBO QtyOnHand.",
+            )
+            return None
+        except Exception as e:
+            return str(e)
+
+    if action == "QBO":
+        try:
+            fix_qbo_to_match_loyverse(row)
+            complete_reconcile_item(batch_id, item_id, "QBO", username, "applied")
+            log_audit(
+                batch_id=batch_id,
+                reconcile_item_id=item_id,
+                username=username,
+                action_type="apply_qbo",
+                new_value="QBO",
+                details=who_prefix + "QBO QtyOnHand set to Loyverse quantity.",
+            )
+            return None
+        except Exception as e:
+            return str(e)
+
+    return "Invalid action."
 
 
-@app.route("/review/<batch_id>/item/<int:item_id>/fix-qbo", methods=["POST"])
-def review_fix_qbo(batch_id, item_id):
+@app.route("/review/<batch_id>/apply-batch", methods=["POST"])
+def review_apply_batch(batch_id):
     redir = _review_post_guard(batch_id)
     if redir is not None:
         return redir
 
     username = current_user()
-    row = get_reconcile_item(batch_id, item_id)
-    if not row:
-        flash("Row not found.", "error")
-        return redirect(url_for("review_batch", batch_id=batch_id))
-    if row["status"] != "pending":
-        flash("This line was already processed.", "error")
+    password = request.form.get("confirm_password", "")
+
+    if not verify_logged_in_password(password):
+        flash("Password incorrect — batch not applied. Try again.", "error")
         return redirect(url_for("review_batch", batch_id=batch_id))
 
-    try:
-        fix_qbo_to_match_loyverse(row)
-        complete_reconcile_item(batch_id, item_id, "QBO", username, "applied")
-        log_audit(
-            batch_id=batch_id,
-            reconcile_item_id=item_id,
-            username=username,
-            action_type="apply_qbo",
-            new_value="QBO",
-            details="QBO QtyOnHand set to Loyverse quantity",
+    items = get_batch_items(batch_id)
+    pending = [r for r in items if r["status"] == "pending"]
+    if not pending:
+        flash("No pending lines in this batch.", "error")
+        return redirect(url_for("review_batch", batch_id=batch_id))
+
+    who = f"User {username} re-authenticated (batch submit); "
+
+    missing = []
+    actions: dict[int, str] = {}
+    for r in pending:
+        rid = int(r["id"])
+        key = f"reconcile_action_{rid}"
+        raw = (request.form.get(key) or "").strip().upper()
+        if raw not in ("LOYVERSE", "QBO", "IGNORE"):
+            missing.append(r.get("item_name") or str(rid))
+        if raw in ("LOYVERSE", "QBO", "IGNORE"):
+            actions[rid] = raw
+
+    if missing:
+        flash(
+            "Select an action (Fix Loyverse, Fix QBO, or Do nothing) for every pending line before submitting.",
+            "error",
         )
-        flash("QuickBooks inventory updated to match Loyverse.", "success")
-        finalize_batch_if_all_items_done(batch_id, username)
-    except Exception as e:
-        flash(str(e), "error")
-
-    return redirect(url_for("review_batch", batch_id=batch_id))
-
-
-@app.route("/review/<batch_id>/item/<int:item_id>/skip", methods=["POST"])
-def review_skip_item(batch_id, item_id):
-    redir = _review_post_guard(batch_id)
-    if redir is not None:
-        return redir
-
-    username = current_user()
-    row = get_reconcile_item(batch_id, item_id)
-    if not row:
-        flash("Row not found.", "error")
-        return redirect(url_for("review_batch", batch_id=batch_id))
-    if row["status"] != "pending":
-        flash("This line was already processed.", "error")
         return redirect(url_for("review_batch", batch_id=batch_id))
 
-    complete_reconcile_item(batch_id, item_id, "IGNORE", username, "ignored")
-    log_audit(
-        batch_id=batch_id,
-        reconcile_item_id=item_id,
-        username=username,
-        action_type="apply_ignore",
-        new_value="IGNORE",
-        details="No inventory changes (reviewer chose do nothing)",
-    )
-    flash("No changes made for this item.", "success")
+    errors: list[str] = []
+    ok = 0
+    for rid, act in actions.items():
+        err = _apply_one_reconcile_line(batch_id, rid, act, username, who)
+        if err:
+            errors.append(f"{rid}: {err}")
+        else:
+            ok += 1
+
     finalize_batch_if_all_items_done(batch_id, username)
+
+    if errors:
+        flash(
+            f"Batch partially applied: {ok} line(s) OK. Errors: " + " | ".join(errors[:5]),
+            "error",
+        )
+    else:
+        flash(f"Batch applied: {ok} line(s). Logged as {username}.", "success")
+
     return redirect(url_for("review_batch", batch_id=batch_id))
 
 
