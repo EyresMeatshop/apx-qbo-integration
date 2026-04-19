@@ -4,7 +4,7 @@ from pathlib import Path
 
 from config import settings
 from database import get_conn, init_db
-from loyverse_client import LoyverseClient
+from loyverse_client import LoyverseClient, normalize_loyverse_item_id
 from qbo_client import QBOClient
 from approval_store import init_approval_tables, create_batch, add_reconcile_item
 
@@ -122,7 +122,7 @@ def generate_inventory_report() -> tuple[str, str, int, int]:
             qbo_item_id = str(row["qbo_item_id"])
             item_name = row["loyverse_name"] or row["qbo_name"] or ""
 
-            vinfo = variant_index.get(loy_item_id) or {}
+            vinfo = variant_index.get(normalize_loyverse_item_id(loy_item_id)) or {}
             loy_qty = safe_float(vinfo.get("in_stock"), 0.0)
 
             qbo_item = qbo_idx.get(qbo_item_id, {})

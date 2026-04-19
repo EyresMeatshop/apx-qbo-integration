@@ -4,7 +4,7 @@ Apply inventory reconciliation: Loyverse ↔ QBO using quantities from a reconci
 
 from __future__ import annotations
 
-from loyverse_client import LoyverseClient
+from loyverse_client import LoyverseClient, normalize_loyverse_item_id
 from qbo_client import QBOClient
 
 
@@ -18,7 +18,7 @@ def fix_loyverse_to_match_qbo(row) -> None:
 
     loy = LoyverseClient()
     idx = loy.build_item_variant_index()
-    vinfo = idx.get(loyverse_item_id)
+    vinfo = idx.get(normalize_loyverse_item_id(loyverse_item_id))
     if not vinfo or not vinfo.get("variant_id"):
         raise ValueError(
             f"No Loyverse variant found for item id {loyverse_item_id}. "

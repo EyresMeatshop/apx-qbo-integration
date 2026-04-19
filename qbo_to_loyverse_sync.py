@@ -1,7 +1,7 @@
 import json
 from database import get_conn
 from qbo_client import QBOClient
-from loyverse_client import LoyverseClient
+from loyverse_client import LoyverseClient, normalize_loyverse_item_id
 from sync_event_store import (
     create_event,
     event_exists,
@@ -274,7 +274,7 @@ def process_qbo_item_event(event) -> dict:
 
     loy = LoyverseClient()
     variant_index = loy.build_item_variant_index()
-    variant_info = variant_index.get(loyverse_item_id)
+    variant_info = variant_index.get(normalize_loyverse_item_id(loyverse_item_id))
 
     if not variant_info:
         return {
@@ -333,7 +333,7 @@ def process_qbo_item_qty_event(event) -> dict:
 
     loy = LoyverseClient()
     variant_index = loy.build_item_variant_index()
-    variant_info = variant_index.get(loyverse_item_id)
+    variant_info = variant_index.get(normalize_loyverse_item_id(loyverse_item_id))
     if not variant_info:
         return {
             "status": "failed",

@@ -4,6 +4,11 @@ import requests
 from config import settings
 
 
+def normalize_loyverse_item_id(item_id: str | None) -> str:
+    """Keys in build_item_variant_index are lowercased Loyverse item UUIDs."""
+    return str(item_id or "").strip().lower()
+
+
 class LoyverseClient:
     def __init__(self):
         self.base_url = settings.LOYVERSE_API_BASE
@@ -129,15 +134,90 @@ class LoyverseClient:
 
         raise last_error
 
+    def get_variant_stock_totals(self) -> dict[str, float]:
+        """
+        Sum in_stock per variant across stores from GET /inventory (paginated).
+
+        Keys are lowercased variant UUID strings for case-insensitive lookup.
+        If /inventory is unavailable, returns {} and callers fall back to /items fields.
+        """
+        totals: dict[str, float] = {}
+        cursor = None
+        try:
+            while True:
+                params: dict = {"limit": 250}
+                if cursor:
+                    params["cursor"] = cursor
+                try:
+                    data = self._get("/inventory", params=params)
+                except requests.exceptions.HTTPError as e:
+                    resp = getattr(e, "response", None)
+                    code = resp.status_code if resp is not None else None
+                    if code == 404:
+                        print("LOYVERSE: GET /inventory returned 404 — using stock fields on /items only.")
+                    else:
+                        print(f"LOYVERSE: GET /inventory failed ({code}); using /items stock fields only.")
+                    return {}
+
+                rows = (
+                    data.get("inventory_levels")
+                    or data.get("InventoryLevels")
+                    or data.get("inventory")
+                    or []
+                )
+                if isinstance(rows, dict):
+                    rows = [rows]
+                if not isinstance(rows, list):
+                    rows = []
+
+                for row in rows:
+                    if not isinstance(row, dict):
+                        continue
+                    vid = (
+                        row.get("variant_id")
+                        or row.get("variantId")
+                        or row.get("id")
+                    )
+                    if not vid:
+                        continue
+                    vk = str(vid).strip().lower()
+                    if "in_stock" in row:
+                        qty = row.get("in_stock")
+                    elif "quantity" in row:
+                        qty = row.get("quantity")
+                    else:
+                        qty = row.get("stock")
+                    try:
+                        q = float(qty if qty is not None else 0)
+                    except Exception:
+                        q = 0.0
+                    totals[vk] = totals.get(vk, 0.0) + q
+
+                cursor = data.get("cursor") if isinstance(data, dict) else None
+                if not cursor:
+                    break
+        except requests.exceptions.HTTPError:
+            return {}
+        except Exception as e:
+            print(f"LOYVERSE: inventory totals skipped: {e}")
+            return {}
+
+        return totals
+
     def build_item_variant_index(self) -> dict[str, dict]:
         """
-        Builds an index keyed by Loyverse item_id (not variant_id):
-        {
-          "<item_id>": {"variant_id": "...", "in_stock": 12.0}
-        }
+        Index keyed by **lowercased** Loyverse item id:
 
-        This is intentionally defensive because Loyverse item payloads vary depending on account features.
+          { "<item_id_lower>": {"variant_id": "...", "in_stock": float} }
+
+        Stock priority:
+        1) GET /inventory sums per variant (when available)
+        2) Embedded in_stock on item / first variant from GET /items
+
+        Items are always indexed when an id exists (no longer skipped when variant_id was missing).
         """
+        stock_by_variant = self.get_variant_stock_totals()
+
         data = self.get_items()
         items = data.get("items", []) if isinstance(data, dict) else []
 
@@ -147,6 +227,8 @@ class LoyverseClient:
             item_id = item.get("id") or item.get("item_id")
             if not item_id:
                 continue
+
+            item_key = str(item_id).strip().lower()
 
             variants = item.get("variants")
             if isinstance(variants, dict):
@@ -158,25 +240,36 @@ class LoyverseClient:
             variant_id = (
                 chosen_variant.get("variant_id")
                 or chosen_variant.get("id")
+                or chosen_variant.get("variantId")
                 or item.get("variant_id")
             )
+            # Single-SKU items: API may only expose the item id; use it as variant for inventory.
+            if not variant_id:
+                variant_id = item_id
 
-            in_stock = (
-                chosen_variant.get("in_stock")
-                if "in_stock" in chosen_variant
-                else item.get("in_stock")
-            )
+            vid_key = str(variant_id).strip().lower()
 
-            try:
-                in_stock_val = float(in_stock if in_stock is not None else 0)
-            except Exception:
-                in_stock_val = 0.0
+            in_stock_val = 0.0
+            if vid_key in stock_by_variant:
+                in_stock_val = stock_by_variant[vid_key]
+            else:
+                in_stock = None
+                if "in_stock" in chosen_variant:
+                    in_stock = chosen_variant.get("in_stock")
+                elif "in_stock" in item:
+                    in_stock = item.get("in_stock")
+                else:
+                    in_stock = chosen_variant.get("stock") or item.get("stock")
 
-            if variant_id:
-                idx[str(item_id)] = {
-                    "variant_id": str(variant_id),
-                    "in_stock": in_stock_val,
-                }
+                try:
+                    in_stock_val = float(in_stock if in_stock is not None else 0)
+                except Exception:
+                    in_stock_val = 0.0
+
+            idx[item_key] = {
+                "variant_id": str(variant_id),
+                "in_stock": in_stock_val,
+            }
 
         return idx
 
