@@ -8,7 +8,12 @@ from loyverse_client import LoyverseClient, normalize_loyverse_item_id
 from qbo_client import QBOClient
 
 
-def fix_loyverse_to_match_qbo(row) -> None:
+def fix_loyverse_to_match_qbo(
+    row,
+    *,
+    loy: LoyverseClient | None = None,
+    loy_variant_index: dict[str, dict] | None = None,
+) -> None:
     """Set Loyverse variant stock to QBO QtyOnHand (truth = QBO)."""
     loyverse_item_id = str(row["loyverse_item_id"] or "").strip()
     qbo_qty = float(row["qbo_qty"] or 0)
@@ -16,8 +21,8 @@ def fix_loyverse_to_match_qbo(row) -> None:
     if not loyverse_item_id:
         raise ValueError("Missing Loyverse item id on reconciliation row.")
 
-    loy = LoyverseClient()
-    idx = loy.build_item_variant_index()
+    loy = loy or LoyverseClient()
+    idx = loy_variant_index or loy.build_item_variant_index()
     vinfo = idx.get(normalize_loyverse_item_id(loyverse_item_id))
     if not vinfo or not vinfo.get("variant_id"):
         raise ValueError(
@@ -30,7 +35,7 @@ def fix_loyverse_to_match_qbo(row) -> None:
     )
 
 
-def fix_qbo_to_match_loyverse(row) -> None:
+def fix_qbo_to_match_loyverse(row, *, qbo: QBOClient | None = None) -> None:
     """Set QBO inventory QtyOnHand to Loyverse quantity (truth = Loyverse for this action)."""
     qbo_item_id = str(row["qbo_item_id"] or "").strip()
     loy_qty = float(row["loyverse_qty"] or 0)
@@ -38,7 +43,7 @@ def fix_qbo_to_match_loyverse(row) -> None:
     if not qbo_item_id:
         raise ValueError("Missing QBO item id on reconciliation row.")
 
-    qbo = QBOClient()
+    qbo = qbo or QBOClient()
     raw = qbo.get_item_by_id(qbo_item_id)
     items = raw.get("QueryResponse", {}).get("Item", [])
     if isinstance(items, dict):

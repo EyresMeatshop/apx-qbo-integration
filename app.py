@@ -26,6 +26,8 @@ from approval_store import (
     get_audit_log,
 )
 from reconcile_actions import fix_loyverse_to_match_qbo, fix_qbo_to_match_loyverse
+from loyverse_client import LoyverseClient
+from qbo_client import QBOClient
 from inventory_reconcile_report import count_item_map_rows
 
 app = Flask(__name__)
@@ -543,7 +545,17 @@ python check_mappings.py</pre>
     )
 
 
-def _apply_one_reconcile_line(batch_id: str, item_id: int, action: str, username: str, who_prefix: str) -> None | str:
+def _apply_one_reconcile_line(
+    batch_id: str,
+    item_id: int,
+    action: str,
+    username: str,
+    who_prefix: str,
+    *,
+    loy: LoyverseClient | None = None,
+    loy_variant_index: dict[str, dict] | None = None,
+    qbo: QBOClient | None = None,
+) -> None | str:
     """
     Apply a single reconcile action. Returns None on success, or an error message string.
     """
@@ -567,7 +579,7 @@ def _apply_one_reconcile_line(batch_id: str, item_id: int, action: str, username
 
     if action == "LOYVERSE":
         try:
-            fix_loyverse_to_match_qbo(row)
+            fix_loyverse_to_match_qbo(row, loy=loy, loy_variant_index=loy_variant_index)
             complete_reconcile_item(batch_id, item_id, "LOYVERSE", username, "applied")
             log_audit(
                 batch_id=batch_id,
@@ -583,7 +595,7 @@ def _apply_one_reconcile_line(batch_id: str, item_id: int, action: str, username
 
     if action == "QBO":
         try:
-            fix_qbo_to_match_loyverse(row)
+            fix_qbo_to_match_loyverse(row, qbo=qbo)
             complete_reconcile_item(batch_id, item_id, "QBO", username, "applied")
             log_audit(
                 batch_id=batch_id,
@@ -639,10 +651,39 @@ def review_apply_batch(batch_id):
         )
         return redirect(url_for("review_batch", batch_id=batch_id))
 
+    # Performance: build API clients once per request and (for Loyverse) build the
+    # item→variant index once per batch. Previously this was recomputed per row,
+    # which could take minutes and make the UI appear "stuck" on submit.
+    loy = None
+    loy_idx = None
+    qbo = None
+    try:
+        if any((act in ("LOYVERSE", "QBO")) for act in actions.values()):
+            qbo = QBOClient()
+    except Exception as e:
+        print(f"WARNING: could not init QBO client for batch apply: {e}")
+
+    try:
+        if any((act == "LOYVERSE") for act in actions.values()):
+            loy = LoyverseClient()
+            loy_idx = loy.build_item_variant_index()
+    except Exception as e:
+        print(f"WARNING: could not build Loyverse variant index for batch apply: {e}")
+
     errors: list[str] = []
     ok = 0
     for rid, act in actions.items():
-        err = _apply_one_reconcile_line(batch_id, rid, act, username, who)
+        print(f"APPLY_BATCH | batch_id={batch_id} | row_id={rid} | action={act} | user={username}")
+        err = _apply_one_reconcile_line(
+            batch_id,
+            rid,
+            act,
+            username,
+            who,
+            loy=loy,
+            loy_variant_index=loy_idx,
+            qbo=qbo,
+        )
         if err:
             errors.append(f"{rid}: {err}")
         else:
