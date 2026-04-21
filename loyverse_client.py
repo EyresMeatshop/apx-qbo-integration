@@ -297,18 +297,37 @@ class LoyverseClient:
         if not inventory_levels:
             return {}
 
-        # Many Loyverse accounts require store_id for inventory updates.
+        # Normalize payload for Loyverse POST /inventory.
+        #
+        # Some accounts require:
+        # - store_id
+        # - stock_after (not in_stock) for updates
         store_id = (getattr(settings, "LOYVERSE_STORE_ID", "") or "").strip()
-        if store_id:
-            enriched = []
-            for row in inventory_levels:
-                if not isinstance(row, dict):
-                    continue
-                if "store_id" not in row and "storeId" not in row:
-                    row = dict(row)
-                    row["store_id"] = store_id
-                enriched.append(row)
-            inventory_levels = enriched
+        normalized: list[dict] = []
+        for row in inventory_levels:
+            if not isinstance(row, dict):
+                continue
+
+            out = dict(row)
+
+            # Ensure store_id when configured.
+            if store_id and "store_id" not in out and "storeId" not in out:
+                out["store_id"] = store_id
+
+            # Loyverse expects stock_after; our callers historically use in_stock.
+            if "stock_after" not in out:
+                if "in_stock" in out:
+                    out["stock_after"] = out.get("in_stock")
+                elif "stock" in out:
+                    out["stock_after"] = out.get("stock")
+
+            # Avoid sending fields that some Loyverse schemas reject.
+            if "in_stock" in out and "stock_after" in out:
+                out.pop("in_stock", None)
+
+            normalized.append(out)
+
+        inventory_levels = normalized
 
         # Loyverse API uses POST /inventory for bulk inventory updates.
         # Some accounts accept a top-level list; others require an object wrapper.
