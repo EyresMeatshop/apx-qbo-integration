@@ -130,7 +130,13 @@ class LoyverseClient:
                     print(f"LOYVERSE API HTTP {r.status_code} POST {path}")
                     if body:
                         print(body)
-                r.raise_for_status()
+                try:
+                    r.raise_for_status()
+                except requests.exceptions.HTTPError as e:
+                    # Make the UI error actionable by including Loyverse's response text.
+                    body = (getattr(r, "text", "") or "")[:2000]
+                    extra = f" | Loyverse says: {body}" if body else ""
+                    raise requests.exceptions.HTTPError(f"{e}{extra}") from None
                 return r.json() if r.text else {}
             except requests.exceptions.ConnectionError as e:
                 last_error = e
