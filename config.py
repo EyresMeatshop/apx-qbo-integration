@@ -23,6 +23,9 @@ class Settings:
 
     LOYVERSE_ACCESS_TOKEN = (os.getenv("LOYVERSE_ACCESS_TOKEN", "") or "").strip()
     LOYVERSE_API_BASE = (os.getenv("LOYVERSE_API_BASE", "https://api.loyverse.com/v1.0") or "").strip().rstrip("/")
+    # Optional but often required for POST /inventory updates.
+    # If set, we include it automatically when adjusting stock.
+    LOYVERSE_STORE_ID = (os.getenv("LOYVERSE_STORE_ID", "") or "").strip()
 
     QBO_CLIENT_ID = os.getenv("QBO_CLIENT_ID", "")
     QBO_CLIENT_SECRET = os.getenv("QBO_CLIENT_SECRET", "")

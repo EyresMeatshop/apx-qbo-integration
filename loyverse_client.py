@@ -125,6 +125,11 @@ class LoyverseClient:
         for attempt in range(3):
             try:
                 r = self.session.post(url, headers=self.headers(), json=payload, timeout=30)
+                if not r.ok:
+                    body = (r.text or "")[:2000]
+                    print(f"LOYVERSE API HTTP {r.status_code} POST {path}")
+                    if body:
+                        print(body)
                 r.raise_for_status()
                 return r.json() if r.text else {}
             except requests.exceptions.ConnectionError as e:
@@ -285,6 +290,19 @@ class LoyverseClient:
         """
         if not inventory_levels:
             return {}
+
+        # Many Loyverse accounts require store_id for inventory updates.
+        store_id = (getattr(settings, "LOYVERSE_STORE_ID", "") or "").strip()
+        if store_id:
+            enriched = []
+            for row in inventory_levels:
+                if not isinstance(row, dict):
+                    continue
+                if "store_id" not in row and "storeId" not in row:
+                    row = dict(row)
+                    row["store_id"] = store_id
+                enriched.append(row)
+            inventory_levels = enriched
 
         # Loyverse API uses POST /inventory for bulk inventory updates.
         # Some accounts accept a top-level list; others require an object wrapper.
