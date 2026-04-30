@@ -13,20 +13,33 @@ from sync_event_store import (
 def collect_loyverse_events() -> int:
     loy = LoyverseClient()
 
-    # Only fetch the newest page for live sync.
-    data = loy._get("/receipts", params={})
-    receipts = data.get("receipts", []) if isinstance(data, dict) else []
+    # Important: do NOT only fetch one page. If more than one page of receipts
+    # happens between worker runs, we'd miss sales entirely.
+    receipts_raw = loy.get_receipts()
+    receipts = receipts_raw.get("receipts", []) if isinstance(receipts_raw, dict) else []
 
-    last_receipt_number = get_state("loyverse_last_receipt_number", "")
+    # Use receipt id as the primary "last seen" cursor (stable + unique).
+    last_receipt_id = get_state("loyverse_last_receipt_id", "")
     new_count = 0
-    newest_seen = last_receipt_number
 
-    for receipt in receipts:
+    newest_seen_id = last_receipt_id
+    newest_seen_number = get_state("loyverse_last_receipt_number", "")
+
+    # Loyverse typically returns newest receipts first. We walk until we hit the last seen id.
+    for idx, receipt in enumerate(receipts):
         receipt_number = receipt.get("receipt_number") or receipt.get("receipt_no") or ""
         receipt_id = receipt.get("id") or receipt_number
 
         if not receipt_id:
             continue
+
+        if idx == 0:
+            newest_seen_id = str(receipt_id)
+            if receipt_number:
+                newest_seen_number = str(receipt_number)
+
+        if last_receipt_id and str(receipt_id) == str(last_receipt_id):
+            break
 
         if event_exists("LOYVERSE", "sale_receipt", str(receipt_id)):
             continue
@@ -40,11 +53,10 @@ def collect_loyverse_events() -> int:
         )
         new_count += 1
 
-        if receipt_number and receipt_number > newest_seen:
-            newest_seen = receipt_number
-
-    if newest_seen:
-        set_state("loyverse_last_receipt_number", newest_seen)
+    if newest_seen_id:
+        set_state("loyverse_last_receipt_id", newest_seen_id)
+    if newest_seen_number:
+        set_state("loyverse_last_receipt_number", newest_seen_number)
 
     return new_count
 

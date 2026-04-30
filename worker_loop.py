@@ -60,13 +60,17 @@ def _seconds_until_next_boundary(now_ast: datetime) -> int:
 def main():
     interval_s = int((os.getenv("SYNC_INTERVAL_SECONDS") or "60").strip() or "60")
     run_once = _env_bool("RUN_ONCE", default=False)
+    respect_window = _env_bool("RESPECT_ACTIVE_WINDOW", default=True)
 
     print(f"APP_ENV={settings.APP_ENV} DRY_RUN={settings.DRY_RUN}")
-    print(f"Worker loop starting. interval={interval_s}s run_once={run_once}")
+    print(
+        f"Worker loop starting. interval={interval_s}s run_once={run_once} "
+        f"respect_active_window={respect_window}"
+    )
 
     while True:
         now_ast = _ast_now()
-        if not _is_active_window(now_ast):
+        if respect_window and not _is_active_window(now_ast):
             sleep_s = _seconds_until_next_boundary(now_ast)
             print(
                 f"Outside active window (AST={now_ast.isoformat(timespec='seconds')}). "
