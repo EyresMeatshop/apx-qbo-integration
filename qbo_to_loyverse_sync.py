@@ -1,5 +1,6 @@
 import json
 from database import get_conn
+from config import settings
 from qbo_client import QBOClient
 from loyverse_client import LoyverseClient, normalize_loyverse_item_id
 from sync_event_store import (
@@ -14,11 +15,22 @@ def get_item_map_by_qbo_item_id() -> dict[str, dict]:
     conn = get_conn()
     try:
         cur = conn.cursor()
-        cur.execute("""
-            SELECT loyverse_item_id, qbo_item_id, loyverse_name, qbo_name
-            FROM item_map_clean_usage
-        """)
-        rows = cur.fetchall()
+        rows = []
+        # Prefer usage-cleaned mapping table when present, but fall back to item_map
+        # so fresh databases work without running cleanup scripts.
+        try:
+            cur.execute("""
+                SELECT loyverse_item_id, qbo_item_id, loyverse_name, qbo_name
+                FROM item_map_clean_usage
+            """)
+            rows = cur.fetchall()
+        except Exception:
+            cur.execute("""
+                SELECT loyverse_item_id, qbo_item_id, loyverse_name, qbo_name
+                FROM item_map
+                WHERE qbo_environment = ?
+            """, (settings.QBO_ENVIRONMENT,))
+            rows = cur.fetchall()
 
         result = {}
         for row in rows:
