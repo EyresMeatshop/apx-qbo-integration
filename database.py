@@ -54,6 +54,9 @@ class _PgConnection:
     def commit(self):
         return self._inner.commit()
 
+    def rollback(self):
+        return self._inner.rollback()
+
     def close(self):
         return self._inner.close()
 
@@ -68,7 +71,10 @@ def get_conn():
     if _backend() == "postgres":
         if psycopg is None:
             raise RuntimeError("DATABASE_URL is set but psycopg is not installed.")
-        conn = psycopg.connect(settings.DATABASE_URL, autocommit=False)
+        # Use autocommit for simple CRUD helpers. On Postgres, any SQL error inside a
+        # transaction marks it aborted until ROLLBACK; autocommit avoids that footgun
+        # across unrelated sequential queries that share no transactional intent.
+        conn = psycopg.connect(settings.DATABASE_URL, autocommit=True)
         return _PgConnection(conn)
 
     db_dir = os.path.dirname(settings.DB_PATH)
@@ -200,7 +206,14 @@ def upsert_qbo_tokens(realm_id: str, access_token: str, refresh_token: str, upda
                 """,
                 (realm_id, access_token, refresh_token, updated_at),
             )
-        conn.commit()
+            conn.commit()
+    except Exception:
+        # Ensure we never leave a Postgres connection stuck in an aborted transaction.
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 
@@ -227,6 +240,12 @@ def load_qbo_tokens(realm_id: str) -> dict[str, str] | None:
             "access_token": row["access_token"],
             "refresh_token": row["refresh_token"],
         }
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
     finally:
         conn.close()
 

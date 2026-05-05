@@ -25,6 +25,10 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: "3.11.9"
+      # By default the worker only runs Tue–Sat 07:30–19:30 AST (see worker_loop.py).
+      # For continuous syncing, disable that gate:
+      - key: RESPECT_ACTIVE_WINDOW
+        value: "false"
       - key: SYNC_INTERVAL_SECONDS
         value: "60"
       - key: QBO_REDIRECT_URI

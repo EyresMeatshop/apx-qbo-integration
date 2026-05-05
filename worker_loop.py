@@ -60,7 +60,14 @@ def _seconds_until_next_boundary(now_ast: datetime) -> int:
 def main():
     interval_s = int((os.getenv("SYNC_INTERVAL_SECONDS") or "60").strip() or "60")
     run_once = _env_bool("RUN_ONCE", default=False)
-    respect_window = _env_bool("RESPECT_ACTIVE_WINDOW", default=True)
+    # Default behavior:
+    # - Production: run continuously (stock sync should not silently pause for days).
+    # - Non-production: keep the historical "business hours" gate unless overridden.
+    respect_window_raw = (os.getenv("RESPECT_ACTIVE_WINDOW", "") or "").strip()
+    if respect_window_raw:
+        respect_window = _env_bool("RESPECT_ACTIVE_WINDOW", default=False)
+    else:
+        respect_window = False if settings.APP_ENV == "production" else True
 
     print(f"APP_ENV={settings.APP_ENV} DRY_RUN={settings.DRY_RUN}")
     print(
