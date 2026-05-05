@@ -2,7 +2,8 @@ from datetime import datetime
 import os
 
 from inventory_reconcile_report import generate_inventory_report
-from email_report import send_email_with_attachment
+from email_report import send_email_with_attachments
+from daily_transactions_report import generate_daily_transactions_report
 import sync_receipts_loyverse_to_qbo
 
 
@@ -35,22 +36,55 @@ def main():
     base_url = os.getenv("APP_BASE_URL", "").rstrip("/")
     review_url = f"{base_url}/login?next=/review/{batch_id}"
 
-    print("\nStep 3: Email inventory reconciliation report")
+    print("\nStep 3: Daily transactions report (sync audit)")
+    tx_path = ""
+    tx_day = ""
     try:
-        send_email_with_attachment(
-            subject=f"Nightly Inventory Reconciliation Report - {batch_id}",
-            body=(
-                "Attached is the nightly inventory reconciliation report.\n"
-                "Quantities are compared with QuickBooks Online (QBO) as the source of truth vs Loyverse.\n\n"
-                f"Review and approve decisions here:\n{review_url}\n\n"
+        tx_path, tx_day = generate_daily_transactions_report()
+        print(f"Daily transactions CSV: {tx_path} (AST day={tx_day})")
+    except Exception as e:
+        print(f"WARNING: Could not generate daily transactions report: {e}")
+
+    print("\nStep 4: Email nightly reports")
+    try:
+        attachments = [report_path]
+        if tx_path:
+            attachments.append(tx_path)
+
+        if tx_path:
+            email_body = (
+                "Attached:\n"
+                "1) Inventory reconciliation CSV (mapped items only).\n"
+                "2) Daily transactions CSV (queued/processed sync_events for the AST day window).\n\n"
+                "Quantities in (1) compare QuickBooks Online (QBO) vs Loyverse for mapped items.\n"
+                "(2) summarizes integration activity and where it originated "
+                "(Loyverse receipts, QBO invoices/invoice lines, QBO quantity snapshots).\n\n"
+                f"Review and approve inventory decisions here:\n{review_url}\n\n"
                 "You will be required to log in and confirm your password again when saving or applying changes."
-            ),
-            attachment_path=report_path,
+            )
+        else:
+            email_body = (
+                "Attached:\n"
+                "1) Inventory reconciliation CSV (mapped items only).\n\n"
+                "(Daily transactions CSV was not generated — see logs for details.)\n\n"
+                "Quantities compare QuickBooks Online (QBO) vs Loyverse for mapped items.\n\n"
+                f"Review and approve inventory decisions here:\n{review_url}\n\n"
+                "You will be required to log in and confirm your password again when saving or applying changes."
+            )
+
+        send_email_with_attachments(
+            subject=f"Nightly Inventory Reconciliation Report - {batch_id}",
+            body=email_body,
+            attachment_paths=attachments,
         )
         print("Report emailed successfully.")
     except Exception as e:
         print(f"WARNING: Failed to email report: {e}")
-        print(f"Report is still available locally at: {report_path}")
+        print(f"Inventory report is still available locally at: {report_path}")
+        try:
+            print(f"Daily transactions report is still available locally at: {tx_path}")
+        except Exception:
+            pass
 
     finished = datetime.now().isoformat(timespec="seconds")
     print(f"\nNightly sync finished at {finished}")

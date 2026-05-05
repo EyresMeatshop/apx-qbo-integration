@@ -10,6 +10,10 @@ from config import settings  # noqa: F401
 
 
 def send_email_with_attachment(subject: str, body: str, attachment_path: str) -> None:
+    send_email_with_attachments(subject, body, [attachment_path])
+
+
+def send_email_with_attachments(subject: str, body: str, attachment_paths: list[str]) -> None:
     smtp_host = os.getenv("SMTP_HOST", "").strip()
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
     smtp_username = os.getenv("SMTP_USERNAME", "").strip()
@@ -28,9 +32,10 @@ def send_email_with_attachment(subject: str, body: str, attachment_path: str) ->
     msg["To"] = ", ".join(recipients)
     msg.set_content(body)
 
-    path = Path(attachment_path)
-    data = path.read_bytes()
-    msg.add_attachment(data, maintype="text", subtype="csv", filename=path.name)
+    for p in attachment_paths:
+        path = Path(p)
+        data = path.read_bytes()
+        msg.add_attachment(data, maintype="text", subtype="csv", filename=path.name)
 
     context = ssl.create_default_context()
 
