@@ -30,6 +30,13 @@ def fix_loyverse_to_match_qbo(
             "Check item still exists in Loyverse."
         )
 
+    ts = vinfo.get("track_stock")
+    if ts is False or str(ts).strip().lower() in ("0", "false", "no", "off"):
+        raise ValueError(
+            "This Loyverse item has stock tracking disabled (track_stock=false). "
+            "Enable inventory tracking for this item in Loyverse before updating quantities."
+        )
+
     loy.update_inventory_levels(
         [{"variant_id": str(vinfo["variant_id"]), "in_stock": qbo_qty}]
     )

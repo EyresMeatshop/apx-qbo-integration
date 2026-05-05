@@ -11,6 +11,19 @@ from sync_event_store import (
 )
 
 
+def _as_bool(value) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
+    if s in ("1", "true", "yes", "y", "on"):
+        return True
+    if s in ("0", "false", "no", "n", "off"):
+        return False
+    return None
+
+
 def get_item_map_by_qbo_item_id() -> dict[str, dict]:
     conn = get_conn()
     try:
@@ -301,6 +314,22 @@ def process_qbo_item_event(event) -> dict:
     if new_stock < 0:
         new_stock = 0.0
 
+    track_stock = _as_bool(variant_info.get("track_stock"))
+    if track_stock is False:
+        return {
+            "status": "ignored",
+            "reason": (
+                f"Loyverse item {loyverse_item_id} has track_stock=false — "
+                "enable stock tracking in Loyverse before syncing inventory changes."
+            ),
+        }
+
+    if abs(new_stock - current_stock) < 0.000001:
+        return {
+            "status": "ignored",
+            "reason": "No stock change needed after applying delta.",
+        }
+
     print(
         f"LOYVERSE STOCK UPDATE | item_id={loyverse_item_id} | "
         f"variant_id={variant_id} | old={current_stock} | "
@@ -355,6 +384,22 @@ def process_qbo_item_qty_event(event) -> dict:
     variant_id = variant_info["variant_id"]
     current_stock = float(variant_info.get("in_stock", 0))
     new_stock = qty_on_hand
+
+    track_stock = _as_bool(variant_info.get("track_stock"))
+    if track_stock is False:
+        return {
+            "status": "ignored",
+            "reason": (
+                f"Loyverse item {loyverse_item_id} has track_stock=false — "
+                "enable stock tracking in Loyverse before syncing inventory changes."
+            ),
+        }
+
+    if abs(new_stock - current_stock) < 0.000001:
+        return {
+            "status": "ignored",
+            "reason": "Loyverse stock already matches QBO QtyOnHand.",
+        }
 
     print(
         f"LOYVERSE STOCK SET | item_id={loyverse_item_id} | "

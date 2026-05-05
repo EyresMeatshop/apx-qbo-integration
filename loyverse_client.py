@@ -277,9 +277,16 @@ class LoyverseClient:
                 except Exception:
                     in_stock_val = 0.0
 
+            # Loyverse inventory updates require track_stock=true on the item.
+            # Field naming varies slightly across payloads; treat missing as "unknown".
+            track_stock = item.get("track_stock")
+            if track_stock is None:
+                track_stock = chosen_variant.get("track_stock")
+
             idx[item_key] = {
                 "variant_id": str(variant_id),
                 "in_stock": in_stock_val,
+                "track_stock": track_stock,
             }
 
         return idx
@@ -329,9 +336,6 @@ class LoyverseClient:
 
         inventory_levels = normalized
 
-        # Loyverse API uses POST /inventory for bulk inventory updates.
-        # Some accounts accept a top-level list; others require an object wrapper.
-        try:
-            return self._post("/inventory", inventory_levels)
-        except Exception:
-            return self._post("/inventory", {"inventory_levels": inventory_levels})
+        # Loyverse expects an object root for POST /inventory on current APIs.
+        # Sending a JSON array first only produces noisy INVALID_VALUE_TYPE errors.
+        return self._post("/inventory", {"inventory_levels": inventory_levels})
