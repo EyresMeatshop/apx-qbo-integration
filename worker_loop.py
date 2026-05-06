@@ -26,9 +26,20 @@ def _is_active_window(now_ast: datetime) -> bool:
     if now_ast.weekday() not in (1, 2, 3, 4, 5):
         return False
 
+    # Allow overrides via env (Barbados AST, HH:MM 24h clock).
+    start_raw = (os.getenv("ACTIVE_WINDOW_START_AST") or "07:30").strip()
+    end_raw = (os.getenv("ACTIVE_WINDOW_END_AST") or "19:30").strip()
+    try:
+        sh, sm = [int(x) for x in start_raw.split(":", 1)]
+        eh, em = [int(x) for x in end_raw.split(":", 1)]
+        start_min = sh * 60 + sm
+        end_min = eh * 60 + em
+    except Exception:
+        # Safe fallback.
+        start_min = 7 * 60 + 30   # 07:30
+        end_min = 19 * 60 + 30    # 19:30
+
     minutes = now_ast.hour * 60 + now_ast.minute
-    start_min = 7 * 60 + 30   # 07:30
-    end_min = 19 * 60 + 30    # 19:30
     return start_min <= minutes < end_min
 
 
@@ -37,24 +48,33 @@ def _seconds_until_next_boundary(now_ast: datetime) -> int:
     If we're outside the active window, sleep until the next start boundary.
     If we're inside, this isn't used.
     """
+    start_raw = (os.getenv("ACTIVE_WINDOW_START_AST") or "07:30").strip()
+    end_raw = (os.getenv("ACTIVE_WINDOW_END_AST") or "19:30").strip()
+    try:
+        sh, sm = [int(x) for x in start_raw.split(":", 1)]
+        eh, em = [int(x) for x in end_raw.split(":", 1)]
+    except Exception:
+        sh, sm = 7, 30
+        eh, em = 19, 30
+
     # Compute today's window start/end in AST
-    start = now_ast.replace(hour=7, minute=30, second=0, microsecond=0)
-    end = now_ast.replace(hour=19, minute=30, second=0, microsecond=0)
+    start = now_ast.replace(hour=sh, minute=sm, second=0, microsecond=0)
+    end = now_ast.replace(hour=eh, minute=em, second=0, microsecond=0)
 
     if now_ast.weekday() in (1, 2, 3, 4, 5):
         if now_ast < start:
             return max(5, int((start - now_ast).total_seconds()))
         if now_ast >= end:
             # next day start
-            next_day = (now_ast + timedelta(days=1)).replace(hour=7, minute=30, second=0, microsecond=0)
+            next_day = (now_ast + timedelta(days=1)).replace(hour=sh, minute=sm, second=0, microsecond=0)
             return max(5, int((next_day - now_ast).total_seconds()))
 
-    # If it's Sun/Mon or outside Tue–Sat, find next Tuesday 07:30
+    # If it's Sun/Mon or outside Tue–Sat, find next Tuesday start time
     # weekday: Mon=0 ... Sun=6
     days_ahead = (1 - now_ast.weekday()) % 7  # days until Tuesday
     if days_ahead == 0 and now_ast.weekday() != 1:
         days_ahead = 7
-    target = (now_ast + timedelta(days=days_ahead)).replace(hour=7, minute=30, second=0, microsecond=0)
+    target = (now_ast + timedelta(days=days_ahead)).replace(hour=sh, minute=sm, second=0, microsecond=0)
     return max(5, int((target - now_ast).total_seconds()))
 
 def main():
